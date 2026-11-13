@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing tests</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 24px; background: #fff; color: #111; }
+  .pass { color: #137333; } .fail { color: #b3261e; font-weight: 600; }
+  li { margin: 2px 0; } pre { margin: 0 0 0 1.5em; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1 id="summary">Running…</h1>
+<p id="tz"></p>
+<ul id="results"></ul>
+<script type="module">
+  import { tests as pricing } from "./pricing.test.js";
+  import { tests as model } from "./model.test.js";
+  const tests = [...pricing, ...model];
+  const ul = document.getElementById("results");
+  const results = [];
+  for (const t of tests) {
+    const li = document.createElement("li");
+    try { t.fn(); li.className = "pass"; li.textContent = "✓ " + t.name; results.push({ name: t.name, ok: true }); }
+    catch (e) { li.className = "fail"; li.textContent = "✗ " + t.name; const pre = document.createElement("pre"); pre.textContent = e.message; li.append(pre); results.push({ name: t.name, ok: false, error: e.message }); }
+    ul.append(li);
+  }
+  const failed = results.filter(r => !r.ok).length;
+  document.getElementById("summary").textContent = failed ? `${failed} of ${results.length} failed` : `All ${results.length} passed`;
+  document.getElementById("tz").textContent = "Time zone: " + Intl.DateTimeFormat().resolvedOptions().timeZone;
+  window.__results = { failed, total: results.length, results };
+</script>
+</body>
+</html>
