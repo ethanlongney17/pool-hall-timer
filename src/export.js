@@ -3,6 +3,7 @@
 
 import { businessDateOf } from "./billing/pricing.js";
 import { sessionCharge, pausedMs, waitStats } from "./model.js";
+import { floorOf, FLOORS } from "./halls.js";
 
 const pad = (n) => String(n).padStart(2, "0");
 export const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -18,8 +19,14 @@ function hms(ms) {
   return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 const dollars = (cents) => (cents / 100).toFixed(2);
-// Every row says which floor it came from, so both floors can share one sheet.
-const floorName = (state) => (state.hall === "upstairs" ? "Upstairs" : "Downstairs");
+// Every row says which floor its table is on, so both floors share one sheet.
+const floorName = (state, tableId) => FLOORS[floorOf(state, tableId)].name;
+// For a total row or a night: "Downstairs", "Upstairs" or "Both".
+function floorsLabel(state, sessions) {
+  const names = new Set(sessions.map((s) => floorName(state, s.tableId)));
+  if (!names.size) return state.hall === "upstairs" ? "Upstairs" : "Downstairs";
+  return names.size > 1 ? "Both" : [...names][0];
+}
 
 function csvCell(v) {
   const s = String(v ?? "");
@@ -39,7 +46,6 @@ export const CSV_HEADER = [
  */
 export function sessionsCsv(state, { night, now }) {
   const tableName = (id) => state.tables.find((t) => t.id === id)?.name ?? id;
-  const floor = floorName(state);
   const key = night ? night.getTime() : null;
   const sessions = state.sessions
     .filter((s) => key == null || businessDateOf(s.start).getTime() === key)
@@ -63,14 +69,14 @@ export function sessionsCsv(state, { night, now }) {
     return csvRow([
       ymd(bd), WEEKDAYS[bd.getDay()], tableName(s.tableId), s.name, dateTime(s.start),
       running ? "" : dateTime(s.end), hms(c.price.ms), (c.price.ms / 60000).toFixed(1), rates,
-      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floor,
+      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floorName(state, s.tableId),
     ]);
   });
 
   const lines = [csvRow(CSV_HEADER), ...rows];
   if (night) {
     lines.push("", csvRow(["Total (closed tables)", "", "", "", "", "", "", "", "",
-      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floor]));
+      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floorsLabel(state, sessions)]));
   }
   // The byte-order mark makes Excel read the file as UTF-8; Numbers ignores it.
   return "﻿" + lines.join("\r\n") + "\r\n";
@@ -80,21 +86,22 @@ export const NIGHTS_HEADER = [
   "Night", "Day", "Tables played", "Hours played", "Full charges ($)", "Coupons used", "Coupons ($)",
   "Collected ($)", "Voided", "Still running", "Floor",
   "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Left waitlist",
+  "Downstairs collected ($)", "Upstairs collected ($)",
 ];
 
 /** One row per night: the figures to check against the POS. Oldest night first. */
 export function nightsCsv(state, { now }) {
   const nights = new Map();
-  const floor = floorName(state);
   const nightOf = (t) => {
     const bd = businessDateOf(t);
     const k = bd.getTime();
-    if (!nights.has(k)) nights.set(k, { bd, played: 0, ms: 0, full: 0, coupons: 0, coupon: 0, charged: 0, voided: 0, running: 0 });
+    if (!nights.has(k)) nights.set(k, { bd, played: 0, ms: 0, full: 0, coupons: 0, coupon: 0, charged: 0, voided: 0, running: 0, games: [], byFloor: { Downstairs: 0, Upstairs: 0 } });
     return nights.get(k);
   };
   for (const w of state.waitHistory ?? []) nightOf(w.addedAt); // nights with waits but no games still get a row
   for (const s of state.sessions) {
     const n = nightOf(s.start);
+    n.games.push(s);
     if (s.voidedAt) { n.voided++; continue; }
     if (s.end == null) { n.running++; continue; }
     const c = sessionCharge(s, now);
@@ -104,6 +111,7 @@ export function nightsCsv(state, { now }) {
     n.coupon += c.discountCents;
     if (s.discount) n.coupons++;
     n.charged += c.chargedCents;
+    n.byFloor[floorName(state, s.tableId)] += c.chargedCents;
   }
   const rows = [...nights.values()]
     .sort((a, b) => a.bd - b.bd)
@@ -112,8 +120,9 @@ export function nightsCsv(state, { now }) {
       const mins = (ms) => (w.seatedCount ? (ms / 60_000).toFixed(1) : "");
       return csvRow([
         ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
-        dollars(n.coupon), dollars(n.charged), n.voided, n.running, floor,
+        dollars(n.coupon), dollars(n.charged), n.voided, n.running, floorsLabel(state, n.games),
         w.seatedCount, mins(w.averageMs), mins(w.longestMs), w.leftCount,
+        dollars(n.byFloor.Downstairs), dollars(n.byFloor.Upstairs),
       ]);
     });
   return "﻿" + [csvRow(NIGHTS_HEADER), ...rows].join("\r\n") + "\r\n";
@@ -141,7 +150,7 @@ export function parseBackup(text, hallId = "downstairs") {
     s.sessions.every((x) => typeof x.id === "string" && typeof x.tableId === "string" && Number.isFinite(x.start));
   if (!ok) throw new Error("That file isn't a Pool Tables backup, or it's damaged.");
   const from = data.hall ?? s.hall ?? "downstairs";
-  if (from !== hallId) {
+  if (hallId !== "any" && from !== hallId) {
     throw new Error(`That's a backup of the ${from} tables. Restore it in the ${from} app instead.`);
   }
   return { exportedAt: data.exportedAt, state: s };

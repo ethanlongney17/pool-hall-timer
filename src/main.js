@@ -1,14 +1,23 @@
-import { createLocalStore } from "./store/local-store.js";
-import { currentHall } from "./halls.js";
+import { createCloudStore } from "./store/cloud-store.js";
+import { currentHall, floorsShown, floorsInPlay, onlyFloors, floorOf, FLOORS } from "./halls.js";
 import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
+import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "10";
+export const APP_VERSION = "11 (cloud)";
 
 const hall = currentHall();
-const store = createLocalStore(hall);
+const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
+
+// What this app shows: downstairs shows upstairs too when it's open; the
+// upstairs app shows only upstairs. Totals in the downstairs app cover the
+// whole building; the upstairs app's cover upstairs.
+const shownFloors = () => floorsShown(hall, store.get().upstairsOpen);
+const shown = () => onlyFloors(store.get(), shownFloors());
+const inPlay = () => onlyFloors(store.get(), floorsInPlay(store.get().upstairsOpen));
+const scope = (state) => (hall.id === "upstairs" ? onlyFloors(state, ["upstairs"]) : state);
 document.title = hall.title;
 document.querySelector(".brand").textContent = hall.title;
 const $ = (id) => document.getElementById(id);
@@ -78,7 +87,7 @@ function tick() {
         el.textContent = shortDur(now - Number(el.dataset.starts));
         break;
       case "estimate": {
-        estimates ??= waitEstimates(store.get(), now);
+        estimates ??= waitEstimates(inPlay(), now);
         el.textContent = fmtEstimate(estimates[Number(el.dataset.position)], el.dataset.style);
         break;
       }
@@ -95,8 +104,19 @@ function tick() {
 // ---------- Main screen ----------
 
 function renderTables(state) {
-  $("tables").innerHTML = state.tables
-    .map((t) => {
+  const floors = shownFloors();
+  const closedNote = hall.id === "upstairs" && !store.get().upstairsOpen
+    ? `<div class="floor-note">Upstairs is marked closed, so downstairs can't see these tables or seat people here.
+        <button class="btn small primary" data-upstairs="open">Open upstairs</button></div>` : "";
+  $("tables").innerHTML = closedNote + floors.map((f) => {
+    const heading = floors.length > 1 ? `<h3 class="floor-head">${FLOORS[f].name}</h3>` : "";
+    return heading + state.tables.filter((t) => floorOf(state, t.id) === f).map(tableCard).join("");
+  }).join("");
+}
+
+function tableCard(t) {
+  const state = store.get();
+  {
       const s = activeSession(state, t.id);
       if (!s) {
         return `<button class="table-card free" data-table="${t.id}">
@@ -108,8 +128,7 @@ function renderTables(state) {
         <span class="t-who">${esc(s.name)}</span>
         <span class="t-time" data-live="elapsed" data-sessions="${s.id}"></span>
         <span class="t-charge" data-live="charge" data-sessions="${s.id}"></span></button>`;
-    })
-    .join("");
+  }
 }
 
 // Estimates are rounded up to 5 minutes and said as a range staff can quote.
@@ -145,9 +164,17 @@ function renderWaitlist(state) {
     : `<li class="empty">No one waiting.</li>`;
 }
 
-function renderStatus(state) {
+const SYNC_TEXT = {
+  live: ["sync live", "● Live: all devices up to date"],
+  offline: ["sync offline", "● Offline: saved here, will sync"],
+  connecting: ["sync offline", "● Connecting…"],
+  "signed-out": ["sync offline", "Not signed in"],
+};
+
+function renderStatus() {
   const now = Date.now();
-  const sum = daySummary(state, businessDateOf(now), now);
+  const state = shown();
+  const sum = daySummary(scope(store.get()), businessDateOf(now), now);
   const running = state.tables.filter((t) => activeSession(state, t.id));
   const openIds = sum.open.map((s) => s.id).join(",");
   const pausedCount = running.filter((t) => isPaused(activeSession(state, t.id))).length;
@@ -155,15 +182,16 @@ function renderStatus(state) {
     <span>Tables running: <b>${running.length}</b> of ${state.tables.length}${pausedCount ? ` (${pausedCount} paused)` : ""}</span>
     <span>Waiting: <b>${state.waitlist.length}</b></span>
     <span>Tonight so far: <b data-live="charge" data-base="${sum.closedTotalCents}" data-sessions="${openIds}"></b></span>
-    ${store.kind === "local" ? `<span class="warn">Saved on this device only</span>` : ""}
+    <span class="${SYNC_TEXT[store.syncStatus()][0]}">${SYNC_TEXT[store.syncStatus()][1]}</span>
     <span class="version">Version ${APP_VERSION}</span>`;
 }
 
 function renderAll() {
-  const state = store.get();
+  const state = shown();
   renderTables(state);
   renderWaitlist(state);
-  renderStatus(state);
+  renderStatus();
+  renderUpstairsButton();
   if (sheet.open && current?.refresh) showSheet(current);
   tick();
 }
@@ -200,7 +228,7 @@ const head = (title, sub = "") => `
   <button class="btn ghost close-x" data-act="close" aria-label="Close">✕</button></div>`;
 
 function freeTables() {
-  const state = store.get();
+  const state = shown();
   return state.tables.filter((t) => !activeSession(state, t.id));
 }
 
@@ -295,8 +323,9 @@ function receiptLines(price) {
     .join("");
 }
 
-function showReceipt(sessionId, { back } = {}) {
-  const s = store.get().sessions.find((x) => x.id === sessionId);
+function showReceipt(sessionId, { back, from } = {}) {
+  const live = store.get().sessions.some((x) => x.id === sessionId);
+  const s = (from ? store.withHistory(from) : store.get()).sessions.find((x) => x.id === sessionId);
   if (!s || s.end == null) return closeSheet();
   const c = sessionCharge(s, Date.now());
   const halfHourOff = Math.min(c.fullCents, Math.round(couponRate(c.price) / 2));
@@ -315,21 +344,21 @@ function showReceipt(sessionId, { back } = {}) {
         ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.minutes
           ? `${s.discount.minutes} min at ${fmtRate(couponRate(c.price))}`
           : `${s.discount.percent}% off`})</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}</div>
-      ${s.voidedAt ? "" : s.discount
+      ${s.voidedAt || !live ? "" : s.discount
         ? `<button class="btn" data-act="uncoupon">Remove coupon</button>`
         : `<button class="btn coupon" data-act="coupon">Apply half-hour coupon (−${formatCents(halfHourOff)})</button>`}
       ${done}
-      ${back || s.voidedAt ? "" : `<button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>`}
+      ${back || s.voidedAt || !live ? "" : `<button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>`}
     </div>`,
     handlers: {
       coupon: () => {
         act("applyDiscount", { sessionId, minutes: 30, label: "Half-hour coupon" });
-        showReceipt(sessionId, { back });
+        showReceipt(sessionId, { back, from });
         toast("Half-hour coupon applied");
       },
       uncoupon: () => {
         act("removeDiscount", { sessionId });
-        showReceipt(sessionId, { back });
+        showReceipt(sessionId, { back, from });
         toast("Coupon removed");
       },
       back: () => back?.(),
@@ -409,7 +438,20 @@ function showToday(dayOffset = 0) {
       const now = Date.now();
       const day = businessDateOf(now);
       day.setDate(day.getDate() + dayOffset);
-      const sum = daySummary(store.get(), day, now);
+      const from = day.getTime();
+      if (!store.hasHistory(from)) {
+        store.loadHistory(from).then(() => current?.isToday && showToday(dayOffset)).catch((e) => toast(e.message, true));
+        return `<div class="sheet">${head("Totals", `${fmtDay(day)} (6am to 6am)`)}
+          <div class="empty">Getting that night from the cloud…</div>
+          <div class="row"><button class="btn" data-act="prev">◀ Previous day</button>
+          <button class="btn" data-act="next">Next day ▶</button></div></div>`;
+      }
+      const dayState = scope(store.withHistory(from));
+      const sum = daySummary(dayState, day, now);
+      const floorTotals = hall.id === "upstairs" ? [] : Object.values(FLOORS).map((f) => {
+        const fs = daySummary(onlyFloors(dayState, [f.id]), day, now);
+        return { name: f.name, cents: fs.closedTotalCents, count: fs.closed.length };
+      });
       const openIds = sum.open.map((s) => s.id).join(",");
       const row = (s, cls = "") => `<tr class="tap ${cls}" data-act="receipt" data-id="${s.id}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
         <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.price.ms)}</td>
@@ -418,7 +460,9 @@ function showToday(dayOffset = 0) {
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
         <div class="big-num">${formatCents(sum.closedTotalCents)}</div>
         <div class="sub" style="margin-top:-4px">collected from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
-        ${waitSummaryHtml(day)}
+        ${floorTotals.some((f) => f.count && f.name === "Upstairs") ? `<dl class="kv">${floorTotals.map((f) =>
+          `<dt>${f.name} (${f.count})</dt><dd>${formatCents(f.cents)}</dd>`).join("")}</dl>` : ""}
+        ${waitSummaryHtml(day, dayState)}
         ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
           <dt>Coupons used (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
         ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-sessions="${openIds}"></dd>
@@ -438,41 +482,67 @@ function showToday(dayOffset = 0) {
           <button class="btn" data-act="csvNights">Export nightly totals (one row per night, for the POS)</button>
           <div class="row">
             <button class="btn" data-act="backup">Save full backup</button>
-            <button class="btn" data-act="restore">Restore from backup…</button>
+            <button class="btn" data-act="restore">Upload a backup file…</button>
           </div>
         </div>
+        <button class="btn link" data-act="signout">Sign this device out</button>
       </div>`;
     },
+    isToday: true,
     handlers: {
-      receipt: ({ id }) => showReceipt(id, { back: () => showToday(dayOffset) }),
+      receipt: ({ id }) => {
+        const day = businessDateOf(Date.now());
+        day.setDate(day.getDate() + dayOffset);
+        showReceipt(id, { back: () => showToday(dayOffset), from: day.getTime() });
+      },
+      signout: () => {
+        if (!confirm("Sign this device out? Nothing is deleted. Someone will need the email and password to sign back in.")) return;
+        closeSheet();
+        store.signOut();
+      },
       prev: () => showToday(dayOffset - 1),
       next: () => dayOffset < 0 && showToday(dayOffset + 1),
       csvNight: () => {
         const night = businessDateOf(Date.now());
         night.setDate(night.getDate() + dayOffset);
-        const csv = sessionsCsv(store.get(), { night, now: Date.now() });
+        const csv = sessionsCsv(scope(store.withHistory(night.getTime())), { night, now: Date.now() });
         return saveAndReport(`${hall.filePrefix}-${ymd(night)}.csv`, csv, "text/csv");
       },
-      csvAll: () => {
-        const csv = sessionsCsv(store.get(), { now: Date.now() });
+      csvAll: () => withAllHistory((all) => {
+        const csv = sessionsCsv(all, { now: Date.now() });
         return saveAndReport(`${hall.filePrefix}-all-nights-to-${ymd(new Date())}.csv`, csv, "text/csv");
-      },
-      csvNights: () => {
-        const csv = nightsCsv(store.get(), { now: Date.now() });
+      }),
+      csvNights: () => withAllHistory((all) => {
+        const csv = nightsCsv(all, { now: Date.now() });
         return saveAndReport(`${hall.filePrefix}-nightly-totals-to-${ymd(new Date())}.csv`, csv, "text/csv");
-      },
-      backup: () => {
+      }),
+      backup: () => withAllHistory((all) => {
         const now = new Date();
         const stamp = `${ymd(now)}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-        return saveAndReport(`${hall.filePrefix}-backup-${stamp}.json`, backupJson(store.get(), now.getTime()), "application/json");
-      },
+        return saveAndReport(`${hall.filePrefix}-backup-${stamp}.json`, backupJson(all, now.getTime()), "application/json");
+      }),
       restore: () => $("restoreInput").click(),
     },
   });
 }
 
-function waitSummaryHtml(day) {
-  const w = waitStats(store.get(), day);
+// Saving needs the tap that asked for it (the iPad won't open the share menu
+// later), so when older nights aren't on the device yet, fetch them first and
+// ask for a second tap.
+let fetchingAll = false;
+function withAllHistory(fn) {
+  if (store.hasHistory(0)) return fn(scope(store.withHistory(0)));
+  if (fetchingAll) return toast("Still getting every night from the cloud…");
+  fetchingAll = true;
+  toast("Getting every night from the cloud…");
+  store.loadHistory(0)
+    .then(() => toast("Ready. Tap the button again to save."))
+    .catch((e) => toast(e.message, true))
+    .finally(() => (fetchingAll = false));
+}
+
+function waitSummaryHtml(day, state) {
+  const w = waitStats(state, day);
   if (!w.seatedCount && !w.leftCount) return "";
   return `<dl class="kv"><dt>Waitlist</dt><dd>${w.seatedCount} seated${w.leftCount ? `, ${w.leftCount} left` : ""}</dd>
     ${w.seatedCount ? `<dt>Average wait</dt><dd>${shortDur(w.averageMs)}</dd><dt>Longest wait</dt><dd>${shortDur(w.longestMs)}</dd>` : ""}</dl>`;
@@ -492,17 +562,16 @@ $("restoreInput").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   try {
-    const { exportedAt, state } = parseBackup(await file.text(), hall.id);
+    const { exportedAt, state } = parseBackup(await file.text(), "any");
     const when = exportedAt ? new Date(exportedAt).toLocaleString() : "an unknown date";
     const ok = confirm(
-      `Replace everything on this iPad with the backup from ${when}?\n\n` +
-        `It has ${state.sessions.length} table sessions and ${state.waitlist.length} waitlist names. ` +
-        `Anything recorded here since that backup will be lost.`,
+      `Add the backup from ${when} to the cloud?\n\n` +
+        `It has ${state.sessions.length} games. Anything already in the cloud stays; nothing is deleted.`,
     );
     if (!ok) return;
-    store.replaceAll(state);
+    const n = store.importState(state);
     closeSheet();
-    toast("Backup restored");
+    toast(`Uploaded ${n} records`);
   } catch (err) {
     toast(err.message, true);
   }
@@ -540,12 +609,105 @@ $("waitList").addEventListener("click", (e) => {
 
 $("todayBtn").addEventListener("click", () => run(() => showToday(0)));
 
+// ---------- Upstairs open / closed (shared by every device) ----------
+
+const upstairsBtn = document.createElement("button");
+upstairsBtn.className = "btn ghost upstairs-btn";
+$("todayBtn").before(upstairsBtn);
+function renderUpstairsButton() {
+  const open = store.get().upstairsOpen;
+  upstairsBtn.textContent = open ? "Upstairs: open" : "Upstairs: closed";
+  upstairsBtn.classList.toggle("on", open);
+}
+function setUpstairs(open) {
+  if (!open) {
+    const up = onlyFloors(store.get(), ["upstairs"]);
+    const running = up.tables.filter((t) => activeSession(up, t.id)).length;
+    if (running) return toast(`Close the ${running} upstairs table${running === 1 ? "" : "s"} first`, true);
+    if (!confirm("Mark upstairs closed? Its tables will be hidden downstairs and left out of wait estimates.")) return;
+  }
+  store.setUpstairsOpen(open);
+  toast(open ? "Upstairs is open" : "Upstairs is closed");
+}
+upstairsBtn.addEventListener("click", () => run(() => setUpstairs(!store.get().upstairsOpen)));
+$("tables").addEventListener("click", (e) => {
+  if (e.target.closest("[data-upstairs=open]")) run(() => setUpstairs(true));
+});
+
+// ---------- Sign-in ----------
+// Each device signs in once with the business's staff account and stays
+// signed in. Until then nothing can be read or changed.
+
+const login = document.createElement("div");
+login.className = "login";
+login.hidden = true;
+login.innerHTML = `<form class="login-card" id="loginForm">
+  <h2>${esc(hall.title)}</h2>
+  <p class="sub">Sign in once on this device with the staff account. It stays signed in.</p>
+  <label for="loginEmail">Email</label>
+  <input id="loginEmail" type="email" autocomplete="username" autocapitalize="off" required>
+  <label for="loginPassword">Password</label>
+  <input id="loginPassword" type="password" autocomplete="current-password" required>
+  <button class="btn primary big" type="submit" id="loginBtn">Sign in</button>
+  <div class="login-error" id="loginError" role="alert"></div>
+</form>`;
+document.body.append(login);
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginError").textContent = "";
+  $("loginBtn").disabled = true;
+  try {
+    await store.signIn($("loginEmail").value, $("loginPassword").value);
+    $("loginPassword").value = "";
+  } catch (err) {
+    $("loginError").textContent = friendlyError(err);
+  } finally {
+    $("loginBtn").disabled = false;
+  }
+});
+
+function handleAuth(user) {
+  login.hidden = !!user;
+  renderAll();
+  if (user) moveLocalDataToCloud();
+}
+
+// Before the cloud, each app kept its data on its own iPad. The first time a
+// device signs in, send what it saved up to the cloud (once), so no history
+// is lost. Safe to run on every device: each record keeps its own id.
+function moveLocalDataToCloud() {
+  const doneKey = `${hall.storageKey}.movedToCloud`;
+  let local;
+  try {
+    if (localStorage.getItem(doneKey)) return;
+    local = JSON.parse(localStorage.getItem(hall.storageKey) || "null");
+  } catch {
+    return;
+  }
+  const count = local ? local.sessions.length + local.waitlist.length + (local.waitHistory?.length ?? 0) : 0;
+  const markDone = () => {
+    try { localStorage.setItem(doneKey, String(Date.now())); } catch {}
+  };
+  if (!count) return markDone();
+  let tries = 0;
+  const attempt = () => {
+    // Wait until the cloud copy has loaded, so running tables aren't doubled up.
+    if (store.syncStatus() === "connecting" && tries++ < 20) return setTimeout(attempt, 500);
+    run(() => {
+      const n = store.importState(local);
+      markDone();
+      toast(`Moved ${n} records from this iPad to the cloud`);
+    });
+  };
+  attempt();
+}
+
 store.subscribe(renderAll);
 renderAll();
 setInterval(tick, 1000);
 // The status bar's day boundary and totals can change with time alone.
 setInterval(() => {
-  renderStatus(store.get());
+  renderStatus();
   tick();
 }, 60_000);
 

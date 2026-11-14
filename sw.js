@@ -2,7 +2,7 @@
 // Network first (so updates arrive as soon as they're published), falling
 // back to the last cached copy when offline.
 
-const CACHE = "pool-hall-v10";
+const CACHE = "pool-hall-v11";
 const SHELL = [
   "./",
   "index.html",
@@ -12,6 +12,9 @@ const SHELL = [
   "src/model.js",
   "src/export.js",
   "src/halls.js",
+  "src/firebase-config.js",
+  "src/store/cloud-store.js",
+  "src/store/sync-core.js",
   "upstairs/",
   "upstairs/index.html",
   "upstairs/manifest.webmanifest",
@@ -27,7 +30,7 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([...SHELL.map((u) => new Request(u, { cache: "reload" })), ...FIREBASE_FILES])).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -38,8 +41,25 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+// Firebase's own code comes from Google. Each version's files never change,
+// so keep a copy and use it, which lets the app open with no internet.
+const FIREBASE = "https://www.gstatic.com/firebasejs/11.10.0/";
+const FIREBASE_FILES = ["firebase-app.js", "firebase-auth.js", "firebase-firestore.js"].map((f) => FIREBASE + f);
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
+  if (req.method === "GET" && req.url.startsWith(FIREBASE)) {
+    e.respondWith(
+      caches.match(req.url).then((hit) => hit || fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req.url, copy));
+        }
+        return res;
+      })),
+    );
+    return;
+  }
   if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
   e.respondWith(
     // "no-cache" makes the browser check with the server every time instead of

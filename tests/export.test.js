@@ -201,8 +201,8 @@ test("Nightly totals export: one row per night, collected after coupons", () => 
   s = M.voidSession(s, { sessionId: "v", now: at(14, 15, 1) });
   const rows = parseCsv(nightsCsv(s, { now: at(14, 16) }));
   eq(rows.length, 3, "header + 2 nights: ");
-  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs|0|||0");
-  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs|0|||0");
+  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs|0|||0|27.50|0.00");
+  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs|0|||0|15.00|0.00");
 });
 
 test("Export lists paused time in its own column", () => {
@@ -284,6 +284,6 @@ test("Nightly totals export includes waitlist stats", () => {
   s = M.seatFromWaitlist(s, { waitId: "w1", tableId: "t3", now: at(13, 20, 18) });
   s = M.waitlistRemove(s, { id: "w2", now: at(13, 20, 10) });
   const rows = parseCsv(nightsCsv(s, { now: at(13, 22) }));
-  eq(rows[0].slice(11).join("|"), "Seated from waitlist|Average wait (min)|Longest wait (min)|Left waitlist");
-  eq(rows[1].slice(11).join("|"), "1|18.0|18.0|1");
+  eq(rows[0].slice(11, 15).join("|"), "Seated from waitlist|Average wait (min)|Longest wait (min)|Left waitlist");
+  eq(rows[1].slice(11, 15).join("|"), "1|18.0|18.0|1");
 });

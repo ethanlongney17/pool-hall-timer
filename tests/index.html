@@ -18,7 +18,8 @@
   import { tests as pricing } from "./pricing.test.js";
   import { tests as model } from "./model.test.js";
   import { tests as exporting } from "./export.test.js";
-  const tests = [...pricing, ...model, ...exporting];
+  import { tests as cloud } from "./cloud.test.js";
+  const tests = [...pricing, ...model, ...exporting, ...cloud];
   const ul = document.getElementById("results");
   const results = [];
   for (const t of tests) {

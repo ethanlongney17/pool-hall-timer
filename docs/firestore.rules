@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Pool Tables: only a signed-in staff account can read or change anything,
+// and only the app's own collections. New sign-ups are turned off in the
+// Firebase console (Authentication > Settings > User actions), so the only
+// accounts are the ones the owners create.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{collection}/{id} {
+      allow read, write: if request.auth != null
+        && collection in ['sessions', 'waitlist', 'waitHistory', 'settings'];
+    }
+  }
+}
