@@ -216,3 +216,40 @@ test("Export lists paused time in its own column", () => {
   eq(rows[1][11], "25.00");
   eq(rows[1][13], "0:15:00");
 });
+
+// --- Upstairs floor ----------------------------------------------------------------
+import { HALLS } from "../src/halls.js";
+
+test("Upstairs starts with 5 tables of its own", () => {
+  const s = M.initialState(HALLS.upstairs);
+  eq(s.tables.length, 5);
+  eq(s.tables[0].name, "Upstairs 1");
+  eq(s.tables[4].name, "Upstairs 5");
+  eq(s.hall, "upstairs");
+  eq(HALLS.upstairs.storageKey === HALLS.downstairs.storageKey, false, "separate saved data: ");
+});
+
+test("Upstairs tables run and bill the same way", () => {
+  let s = M.openTable(M.initialState(HALLS.upstairs), { tableId: "u3", now: at(13, 20) });
+  s = M.closeTable(s, { tableId: "u3", now: at(13, 21) });
+  const rows = parseCsv(sessionsCsv(s, { night: businessDateOf(at(13, 22)), now: at(13, 22) }));
+  eq(rows[1][2], "Upstairs 3");
+  eq(rows[1][11], "25.00");
+  throws(() => M.openTable(s, { tableId: "t1", now: at(13, 22) }), "downstairs table upstairs");
+});
+
+test("A backup can only be restored on the floor it came from", () => {
+  const up = backupJson(M.initialState(HALLS.upstairs), at(13, 22));
+  const down = backupJson(M.initialState(), at(13, 22));
+  eq(parseBackup(up, "upstairs").state.tables.length, 5);
+  throws(() => parseBackup(up, "downstairs"), "upstairs backup downstairs");
+  throws(() => parseBackup(down, "upstairs"), "downstairs backup upstairs");
+});
+
+test("Backups saved before upstairs existed count as downstairs", () => {
+  const old = JSON.parse(backupJson(M.initialState(), at(13, 22)));
+  delete old.hall;
+  delete old.state.hall;
+  eq(parseBackup(JSON.stringify(old)).state.tables.length, 11);
+  throws(() => parseBackup(JSON.stringify(old), "upstairs"), "old backup upstairs");
+});

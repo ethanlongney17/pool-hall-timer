@@ -10,12 +10,14 @@
 
 import { priceIntervals, businessDateOf } from "./billing/pricing.js";
 
-export const TABLE_COUNT = 11;
+import { HALLS } from "./halls.js";
 
-export function initialState() {
+/** A fresh, empty floor. Defaults to downstairs (11 tables). */
+export function initialState(hall = HALLS.downstairs) {
   return {
     version: 1,
-    tables: Array.from({ length: TABLE_COUNT }, (_, i) => ({ id: `t${i + 1}`, name: `Table ${i + 1}` })),
+    hall: hall.id,
+    tables: hall.tables.map((t) => ({ ...t })),
     sessions: [], // { id, tableId, name, start, end|null, voidedAt?, voidReason?, log: [] }
     waitlist: [], // { id, name, note, addedAt }
   };

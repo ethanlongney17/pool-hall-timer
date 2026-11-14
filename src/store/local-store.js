@@ -8,9 +8,8 @@
 
 import { actions, initialState } from "../model.js";
 
-const KEY = "poolhall.state.v1";
 
-function load() {
+function load(KEY, hall) {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
@@ -20,11 +19,12 @@ function load() {
   } catch (e) {
     console.error("Could not read saved data", e);
   }
-  return initialState();
+  return initialState(hall);
 }
 
-export function createLocalStore() {
-  let state = load();
+export function createLocalStore(hall) {
+  const KEY = hall.storageKey;
+  let state = load(KEY, hall);
   const listeners = new Set();
   const emit = () => listeners.forEach((fn) => fn(state));
 

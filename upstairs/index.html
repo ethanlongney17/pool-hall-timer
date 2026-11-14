@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" data-hall="upstairs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Upstairs Tables</title>
+<meta name="theme-color" content="#0d141b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Upstairs Tables">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="../icons/upstairs-180.png">
+<link rel="icon" href="../icons/upstairs-192.png">
+<link rel="stylesheet" href="../app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Upstairs Tables</div>
+  <div class="clock" id="clock"></div>
+  <div class="rate" id="rate"></div>
+  <button class="btn ghost" id="todayBtn">Today's totals</button>
+</header>
+
+<main class="layout">
+  <section class="tables" id="tables" aria-label="Tables"></section>
+
+  <aside class="waitlist" aria-label="Waitlist">
+    <div class="panel-head">
+      <h2>Waitlist <span class="count" id="waitCount"></span></h2>
+    </div>
+    <form id="waitForm" class="wait-form" autocomplete="off">
+      <input id="waitName" placeholder="Name" maxlength="40" enterkeyhint="done" aria-label="Name">
+      <input id="waitNote" placeholder="Note (optional)" maxlength="60" aria-label="Note">
+      <button class="btn primary" type="submit">Add</button>
+    </form>
+    <ol class="wait-list" id="waitList"></ol>
+  </aside>
+</main>
+
+<footer class="statusbar" id="status"></footer>
+
+<dialog id="sheet"><div id="sheetBody"></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="restoreInput" accept=".json,application/json" hidden>
+
+<script type="module" src="../src/main.js"></script>
+</body>
+</html>

@@ -108,11 +108,11 @@ export function nightsCsv(state, { now }) {
 // ---------- Full backup ----------
 
 export function backupJson(state, now) {
-  return JSON.stringify({ app: "pool-tables", backupVersion: 1, exportedAt: now, state }, null, 1);
+  return JSON.stringify({ app: "pool-tables", backupVersion: 1, hall: state.hall ?? "downstairs", exportedAt: now, state }, null, 1);
 }
 
 /** Read a backup file. Throws a staff-readable message if it isn't one. */
-export function parseBackup(text) {
+export function parseBackup(text, hallId = "downstairs") {
   let data;
   try {
     data = JSON.parse(text);
@@ -126,6 +126,10 @@ export function parseBackup(text) {
     Array.isArray(s.tables) && Array.isArray(s.sessions) && Array.isArray(s.waitlist) &&
     s.sessions.every((x) => typeof x.id === "string" && typeof x.tableId === "string" && Number.isFinite(x.start));
   if (!ok) throw new Error("That file isn't a Pool Tables backup, or it's damaged.");
+  const from = data.hall ?? s.hall ?? "downstairs";
+  if (from !== hallId) {
+    throw new Error(`That's a backup of the ${from} tables. Restore it in the ${from} app instead.`);
+  }
   return { exportedAt: data.exportedAt, state: s };
 }
 

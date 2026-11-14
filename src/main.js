@@ -1,12 +1,16 @@
 import { createLocalStore } from "./store/local-store.js";
+import { currentHall } from "./halls.js";
 import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "6 (pause)";
+export const APP_VERSION = "7";
 
-const store = createLocalStore();
+const hall = currentHall();
+const store = createLocalStore(hall);
+document.title = hall.title;
+document.querySelector(".brand").textContent = hall.title;
 const $ = (id) => document.getElementById(id);
 const sheet = $("sheet");
 const sheetBody = $("sheetBody");
@@ -423,20 +427,20 @@ function showToday(dayOffset = 0) {
         const night = businessDateOf(Date.now());
         night.setDate(night.getDate() + dayOffset);
         const csv = sessionsCsv(store.get(), { night, now: Date.now() });
-        return saveAndReport(`pool-tables-${ymd(night)}.csv`, csv, "text/csv");
+        return saveAndReport(`${hall.filePrefix}-${ymd(night)}.csv`, csv, "text/csv");
       },
       csvAll: () => {
         const csv = sessionsCsv(store.get(), { now: Date.now() });
-        return saveAndReport(`pool-tables-all-nights-to-${ymd(new Date())}.csv`, csv, "text/csv");
+        return saveAndReport(`${hall.filePrefix}-all-nights-to-${ymd(new Date())}.csv`, csv, "text/csv");
       },
       csvNights: () => {
         const csv = nightsCsv(store.get(), { now: Date.now() });
-        return saveAndReport(`pool-tables-nightly-totals-to-${ymd(new Date())}.csv`, csv, "text/csv");
+        return saveAndReport(`${hall.filePrefix}-nightly-totals-to-${ymd(new Date())}.csv`, csv, "text/csv");
       },
       backup: () => {
         const now = new Date();
         const stamp = `${ymd(now)}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-        return saveAndReport(`pool-tables-backup-${stamp}.json`, backupJson(store.get(), now.getTime()), "application/json");
+        return saveAndReport(`${hall.filePrefix}-backup-${stamp}.json`, backupJson(store.get(), now.getTime()), "application/json");
       },
       restore: () => $("restoreInput").click(),
     },
@@ -457,7 +461,7 @@ $("restoreInput").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   try {
-    const { exportedAt, state } = parseBackup(await file.text());
+    const { exportedAt, state } = parseBackup(await file.text(), hall.id);
     const when = exportedAt ? new Date(exportedAt).toLocaleString() : "an unknown date";
     const ok = confirm(
       `Replace everything on this iPad with the backup from ${when}?\n\n` +
@@ -522,7 +526,7 @@ setInterval(() => {
 if ("serviceWorker" in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker
-    .register("sw.js", { updateViaCache: "none" })
+    .register(new URL("../sw.js", import.meta.url), { updateViaCache: "none" })
     .then((reg) => {
       reg.update().catch(() => {});
       document.addEventListener("visibilitychange", () => {
