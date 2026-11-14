@@ -13,7 +13,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, onSnapshot, query, where, writeBatch, getDocs, setDoc,
+  collection, doc, onSnapshot, query, where, writeBatch, getDocs, getDocsFromCache, setDoc,
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "../firebase-config.js";
 import { actions } from "../model.js";
@@ -177,6 +177,33 @@ export function createCloudStore({ onAuthChange, onError }) {
         sessions: s.docs.map((d) => ({ ...d.data(), id: d.id })),
         waitHistory: w.docs.map((d) => ({ ...d.data(), id: d.id })),
       });
+    },
+
+    /**
+     * Every record ever, for the Reports page. Records this device already
+     * has are reused, and only the last week's are fetched again (to pick up
+     * late changes like coupons), so opening Reports again costs very little.
+     * `full: true` re-fetches everything.
+     */
+    async loadAll({ full = false } = {}) {
+      const all = {};
+      for (const [col, field] of [["sessions", "start"], ["waitHistory", "addedAt"]]) {
+        let cached = [];
+        if (!full) {
+          try {
+            cached = (await getDocsFromCache(collection(db, col))).docs.map((d) => ({ ...d.data(), id: d.id }));
+          } catch {}
+        }
+        const newest = cached.reduce((m, x) => Math.max(m, x[field] ?? 0), 0);
+        const since = cached.length ? newest - 7 * DAY : 0;
+        const fresh = (await getDocs(query(collection(db, col), where(field, ">=", since)))).docs
+          .map((d) => ({ ...d.data(), id: d.id }));
+        const byId = new Map(cached.map((x) => [x.id, x]));
+        for (const x of fresh) byId.set(x.id, x);
+        all[col] = [...byId.values()];
+      }
+      historyCache.set(0, all);
+      return withExtra(state, all);
     },
 
     /**

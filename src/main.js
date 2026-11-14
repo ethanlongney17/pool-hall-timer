@@ -6,7 +6,7 @@ import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from 
 import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "13 (cloud)";
+export const APP_VERSION = "14 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -614,6 +614,7 @@ function showToday(dayOffset = 0) {
             <button class="btn" data-act="restore">Upload a backup file…</button>
           </div>
         </div>
+        <a class="btn link" href="${new URL("../reports/", import.meta.url)}">Owners' reports: every night, trends and comparisons ↗</a>
         <button class="btn link" data-act="signout">Sign this device out</button>
       </div>`;
     },

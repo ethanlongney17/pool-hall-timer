@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-hall="reports">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pool Hall Reports</title>
+<meta name="theme-color" content="#0d141b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Reports">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="stylesheet" href="../app.css">
+<link rel="stylesheet" href="../reports.css">
+</head>
+<body class="reports">
+<div class="demo-banner" id="demoBanner" hidden>SAMPLE DATA: not real figures. This shows what the page will look like once real nights are recorded.</div>
+<header class="r-head">
+  <div>
+    <h1>Pool Hall Reports</h1>
+    <div class="r-sub" id="subtitle">Both floors · every night recorded</div>
+  </div>
+  <div class="r-head-actions">
+    <button class="btn ghost" id="refreshBtn">Refresh</button>
+    <button class="btn ghost" id="exportBtn">Export nights</button>
+  </div>
+</header>
+
+<nav class="periods" id="periods" aria-label="Period"></nav>
+
+<main class="r-main" id="report">
+  <p class="r-loading">Loading every night from the cloud…</p>
+</main>
+
+<div class="chart-tip" id="tip" role="status" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="../src/reports.js"></script>
+</body>
+</html>
