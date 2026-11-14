@@ -252,6 +252,7 @@ export function waitlistAdd(state, { name, note = "", now, id = newId() }) {
 
 function takeOffWaitlist(state, w, now, outcome, tableId) {
   const record = { id: w.id, name: w.name, addedAt: w.addedAt, endedAt: Math.max(now, w.addedAt), outcome };
+  if (w.note) record.note = w.note;
   if (tableId) record.tableId = tableId;
   return {
     ...state,
@@ -265,6 +266,19 @@ export function waitlistRemove(state, { id, now = Date.now() }) {
   const w = state.waitlist.find((x) => x.id === id);
   if (!w) return state;
   return takeOffWaitlist(state, w, now, "left");
+}
+
+/** Undo a removal: back in their original place in line, as if never removed. */
+export function waitlistRestore(state, { id }) {
+  const r = (state.waitHistory ?? []).find((x) => x.id === id && x.outcome === "left");
+  if (!r) throw new Error("That name can't be put back");
+  if (state.waitlist.some((x) => x.id === id)) return state;
+  const entry = { id: r.id, name: r.name, note: r.note ?? "", addedAt: r.addedAt };
+  return {
+    ...state,
+    waitlist: [...state.waitlist, entry].sort((a, b) => a.addedAt - b.addedAt),
+    waitHistory: state.waitHistory.filter((x) => x !== r),
+  };
 }
 
 export function seatFromWaitlist(state, { waitId, tableId, now }) {
@@ -354,6 +368,7 @@ export const actions = {
   voidSession,
   waitlistAdd,
   waitlistRemove,
+  waitlistRestore,
   seatFromWaitlist,
   applyDiscount,
   pauseTable,

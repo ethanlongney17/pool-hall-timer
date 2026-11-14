@@ -6,7 +6,7 @@ import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from 
 import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "11 (cloud)";
+export const APP_VERSION = "12 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -40,12 +40,49 @@ const tableName = (id) => store.get().tables.find((t) => t.id === id)?.name ?? i
 // ---------- Feedback ----------
 
 let toastTimer;
-function toast(msg, isError = false) {
+// A short message at the bottom. With `action`, it shows a button (Undo) and
+// stays up a little longer so there's time to tap it.
+function toast(msg, isError = false, action = null) {
   const el = $("toast");
   el.textContent = msg;
-  el.className = `toast show${isError ? " error" : ""}`;
+  if (action) {
+    const b = document.createElement("button");
+    b.className = "toast-btn";
+    b.textContent = action.label;
+    b.addEventListener("click", () => {
+      el.className = "toast";
+      run(action.fn);
+    }, { once: true });
+    el.append(b);
+  }
+  el.className = `toast show${isError ? " error" : ""}${action ? " has-action" : ""}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = "toast"), isError ? 4000 : 2200);
+  toastTimer = setTimeout(() => (el.className = "toast"), action ? 6000 : isError ? 4000 : 2200);
+}
+
+// An "are you sure?" step drawn by the app itself. Browser pop-ups (confirm,
+// prompt) can be blocked, so the app never relies on them.
+function askSheet({ title, text = "", confirmLabel, danger = false, input = null, onConfirm, onBack }) {
+  showSheet({
+    render: () => `<div class="sheet">
+      ${head(esc(title), text ? esc(text) : "")}
+      ${input ? `<input id="askInput" value="${esc(input.value ?? "")}" placeholder="${esc(input.placeholder ?? "")}" maxlength="${input.max ?? 60}">` : ""}
+      <button class="btn ${danger ? "danger" : "primary"} big" data-act="yes">${esc(confirmLabel)}</button>
+      <button class="btn" data-act="no">${onBack ? "Back" : "Cancel"}</button>
+    </div>`,
+    mounted: () => {
+      if (!input) return;
+      const field = $("askInput");
+      field.closest(".sheet").addEventListener("submit", (e) => e.preventDefault());
+      field.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") run(() => onConfirm(field.value));
+      });
+    },
+    handlers: {
+      yes: () => onConfirm(input ? $("askInput").value : undefined),
+      no: () => (onBack ? onBack() : closeSheet()),
+    },
+  });
 }
 function run(fn) {
   try {
@@ -169,6 +206,7 @@ const SYNC_TEXT = {
   offline: ["sync offline", "● Offline: saved here, will sync"],
   connecting: ["sync offline", "● Connecting…"],
   "signed-out": ["sync offline", "Not signed in"],
+  denied: ["sync denied", "✕ NOT SAVING: the cloud refused access (check the database rules)"],
 };
 
 function renderStatus() {
@@ -303,12 +341,17 @@ function showRunning(tableId) {
         showReceipt(s.id);
       },
       move: () => showMove(tableId),
-      rename: () => {
-        const name = prompt("Customer name", s.name);
-        if (name == null) return;
-        act("renameSession", { sessionId: s.id, name });
-        showRunning(tableId);
-      },
+      rename: () =>
+        askSheet({
+          title: `${s.name ? "Edit" : "Add"} name for ${tableName(tableId)}`,
+          confirmLabel: "Save name",
+          input: { value: s.name, placeholder: "Customer name", max: 40 },
+          onConfirm: (name) => {
+            act("renameSession", { sessionId: s.id, name });
+            showRunning(tableId);
+          },
+          onBack: () => showRunning(tableId),
+        }),
       void: () => showVoid(s.id),
     },
   });
@@ -495,11 +538,18 @@ function showToday(dayOffset = 0) {
         day.setDate(day.getDate() + dayOffset);
         showReceipt(id, { back: () => showToday(dayOffset), from: day.getTime() });
       },
-      signout: () => {
-        if (!confirm("Sign this device out? Nothing is deleted. Someone will need the email and password to sign back in.")) return;
-        closeSheet();
-        store.signOut();
-      },
+      signout: () =>
+        askSheet({
+          title: "Sign this device out?",
+          text: "Nothing is deleted. Someone will need the staff email and password to sign back in.",
+          confirmLabel: "Sign out",
+          danger: true,
+          onConfirm: () => {
+            closeSheet();
+            store.signOut();
+          },
+          onBack: () => showToday(dayOffset),
+        }),
       prev: () => showToday(dayOffset - 1),
       next: () => dayOffset < 0 && showToday(dayOffset + 1),
       csvNight: () => {
@@ -564,14 +614,16 @@ $("restoreInput").addEventListener("change", async (e) => {
   try {
     const { exportedAt, state } = parseBackup(await file.text(), "any");
     const when = exportedAt ? new Date(exportedAt).toLocaleString() : "an unknown date";
-    const ok = confirm(
-      `Add the backup from ${when} to the cloud?\n\n` +
-        `It has ${state.sessions.length} games. Anything already in the cloud stays; nothing is deleted.`,
-    );
-    if (!ok) return;
-    const n = store.importState(state);
-    closeSheet();
-    toast(`Uploaded ${n} records`);
+    askSheet({
+      title: "Add this backup to the cloud?",
+      text: `Backup from ${when} with ${state.sessions.length} games. Anything already in the cloud stays; nothing is deleted.`,
+      confirmLabel: "Upload backup",
+      onConfirm: () => {
+        const n = store.importState(state);
+        closeSheet();
+        toast(`Uploaded ${n} records`);
+      },
+    });
   } catch (err) {
     toast(err.message, true);
   }
@@ -604,7 +656,11 @@ $("waitList").addEventListener("click", (e) => {
   const w = store.get().waitlist.find((x) => x.id === id);
   if (!w) return;
   if (el.dataset.waitAct === "seat") return run(() => showSeat(id));
-  if (confirm(`Remove ${w.name} from the waitlist? (Recorded as left without a table.)`)) run(() => act("waitlistRemove", { id }));
+  // One tap: people give up all the time. A mis-tap can be undone.
+  run(() => {
+    act("waitlistRemove", { id });
+    toast(`${w.name} removed from the waitlist`, false, { label: "Undo", fn: () => act("waitlistRestore", { id }) });
+  });
 });
 
 $("todayBtn").addEventListener("click", () => run(() => showToday(0)));
@@ -624,10 +680,9 @@ function setUpstairs(open) {
     const up = onlyFloors(store.get(), ["upstairs"]);
     const running = up.tables.filter((t) => activeSession(up, t.id)).length;
     if (running) return toast(`Close the ${running} upstairs table${running === 1 ? "" : "s"} first`, true);
-    if (!confirm("Mark upstairs closed? Its tables will be hidden downstairs and left out of wait estimates.")) return;
   }
   store.setUpstairsOpen(open);
-  toast(open ? "Upstairs is open" : "Upstairs is closed");
+  toast(open ? "Upstairs is open" : "Upstairs is closed", false, { label: "Undo", fn: () => store.setUpstairsOpen(!open) });
 }
 upstairsBtn.addEventListener("click", () => run(() => setUpstairs(!store.get().upstairsOpen)));
 $("tables").addEventListener("click", (e) => {

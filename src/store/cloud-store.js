@@ -58,8 +58,13 @@ export function createCloudStore({ onAuthChange, onError }) {
     state = mirror.state(base);
     emit();
   };
+  let denied = false;
   const fail = (e) => {
     console.error(e);
+    if (e?.code === "permission-denied") {
+      denied = true;
+      emit();
+    }
     onError?.(friendlyError(e));
   };
 
@@ -68,6 +73,7 @@ export function createCloudStore({ onAuthChange, onError }) {
     const watch = (col, q) =>
       onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
         mirror.apply(col, snap.docChanges().map((ch) => ({ type: ch.type, id: ch.doc.id, data: ch.doc.data() })));
+        denied = false;
         sync.fromCache = snap.metadata.fromCache;
         sync.pending = snap.metadata.hasPendingWrites;
         loaded.add(col);
@@ -103,6 +109,7 @@ export function createCloudStore({ onAuthChange, onError }) {
 
   onAuthStateChanged(auth, (u) => {
     user = u;
+    denied = false;
     if (u) listen();
     else stop();
     onAuthChange?.(u);
@@ -138,6 +145,7 @@ export function createCloudStore({ onAuthChange, onError }) {
     /** "live", "offline" (changes saved here, will sync) or "connecting". */
     syncStatus() {
       if (!user) return "signed-out";
+      if (denied) return "denied";
       if (loaded.size < COLLECTIONS.length) return "connecting";
       if (sync.pending || sync.fromCache) return "offline";
       return "live";

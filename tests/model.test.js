@@ -270,3 +270,16 @@ test("Paused time doesn't count toward a table finishing", () => {
   eq(e[0], 20, "B (played 40) is next: ");
   eq(e[1], 50, "A (played 10) after: ");
 });
+
+test("Removing someone from the waitlist can be undone: back in their place, not counted as left", () => {
+  let s = M.waitlistAdd(M.initialState(), { name: "Sam", note: "party of 4", now: at(13, 20), id: "w1" });
+  s = M.waitlistAdd(s, { name: "Alex", now: at(13, 20, 5), id: "w2" });
+  s = M.waitlistRemove(s, { id: "w1", now: at(13, 20, 10) });
+  eq(s.waitlist.map((w) => w.name).join(), "Alex");
+  s = M.waitlistRestore(s, { id: "w1" });
+  eq(s.waitlist.map((w) => w.name).join(), "Sam,Alex", "back first in line: ");
+  eq(s.waitlist[0].note, "party of 4");
+  eq(s.waitlist[0].addedAt, at(13, 20), "keeps original wait time: ");
+  eq(s.waitHistory.length, 0, "not recorded as left: ");
+  throws(() => M.waitlistRestore(s, { id: "nope" }), "unknown");
+});
