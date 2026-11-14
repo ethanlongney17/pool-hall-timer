@@ -1,11 +1,11 @@
 import { createLocalStore } from "./store/local-store.js";
 import { currentHall } from "./halls.js";
-import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs } from "./model.js";
+import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "9";
+export const APP_VERSION = "10";
 
 const hall = currentHall();
 const store = createLocalStore(hall);
@@ -65,6 +65,7 @@ function tick() {
     const s = byId.get(id);
     return s ? sessionCharge(s, now) : null;
   };
+  let estimates = null; // worked out once per tick, only if something shows one
   document.querySelectorAll("[data-live]").forEach((el) => {
     const ids = (el.dataset.sessions || "").split(",").filter(Boolean);
     switch (el.dataset.live) {
@@ -76,6 +77,11 @@ function tick() {
       case "wait":
         el.textContent = shortDur(now - Number(el.dataset.starts));
         break;
+      case "estimate": {
+        estimates ??= waitEstimates(store.get(), now);
+        el.textContent = fmtEstimate(estimates[Number(el.dataset.position)], el.dataset.style);
+        break;
+      }
       case "charge": {
         const base = Number(el.dataset.base || 0);
         const cents = ids.reduce((a, id) => a + (charge(id)?.chargedCents ?? 0), base);
@@ -106,14 +112,31 @@ function renderTables(state) {
     .join("");
 }
 
+// Estimates are rounded up to 5 minutes and said as a range staff can quote.
+function fmtEstimate(ms, style) {
+  if (ms == null) return "";
+  if (ms <= 0) return style === "new" ? "A table is free now" : "table free now";
+  const lo = Math.max(5, Math.ceil(ms / 300_000) * 5);
+  const text = lo >= 60 ? `${Math.floor(lo / 60)}h ${String(lo % 60).padStart(2, "0")}m` : `${lo}–${lo + 5} min`;
+  return style === "new" ? `Wait for a new party: about ${text}` : `Est. wait ${text}`;
+}
+
+let newWaitEl;
 function renderWaitlist(state) {
+  if (!newWaitEl) {
+    newWaitEl = document.createElement("div");
+    newWaitEl.className = "wait-new";
+    $("waitForm").after(newWaitEl);
+  }
+  newWaitEl.innerHTML = `<span data-live="estimate" data-position="${state.waitlist.length}" data-style="new"></span>`;
   $("waitCount").textContent = state.waitlist.length ? `(${state.waitlist.length})` : "";
   $("waitList").innerHTML = state.waitlist.length
     ? state.waitlist
         .map(
-          (w) => `<li class="wait-item">
+          (w, i) => `<li class="wait-item">
         <div style="min-width:0"><div class="wait-name">${esc(w.name)}</div>
-          <div class="wait-meta">${w.note ? esc(w.note) + " · " : ""}waiting <span data-live="wait" data-starts="${w.addedAt}"></span></div></div>
+          <div class="wait-meta">${w.note ? esc(w.note) + " · " : ""}waiting <span data-live="wait" data-starts="${w.addedAt}"></span></div>
+          <div class="wait-est" data-live="estimate" data-position="${i}"></div></div>
         <button class="btn small primary" data-wait-act="seat" data-id="${w.id}">Seat</button>
         <button class="btn small" data-wait-act="remove" data-id="${w.id}" aria-label="Remove ${esc(w.name)}">✕</button>
       </li>`,
@@ -395,6 +418,7 @@ function showToday(dayOffset = 0) {
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
         <div class="big-num">${formatCents(sum.closedTotalCents)}</div>
         <div class="sub" style="margin-top:-4px">collected from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
+        ${waitSummaryHtml(day)}
         ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
           <dt>Coupons used (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
         ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-sessions="${openIds}"></dd>
@@ -445,6 +469,13 @@ function showToday(dayOffset = 0) {
       restore: () => $("restoreInput").click(),
     },
   });
+}
+
+function waitSummaryHtml(day) {
+  const w = waitStats(store.get(), day);
+  if (!w.seatedCount && !w.leftCount) return "";
+  return `<dl class="kv"><dt>Waitlist</dt><dd>${w.seatedCount} seated${w.leftCount ? `, ${w.leftCount} left` : ""}</dd>
+    ${w.seatedCount ? `<dt>Average wait</dt><dd>${shortDur(w.averageMs)}</dd><dt>Longest wait</dt><dd>${shortDur(w.longestMs)}</dd>` : ""}</dl>`;
 }
 
 async function saveAndReport(filename, text, type) {
@@ -504,7 +535,7 @@ $("waitList").addEventListener("click", (e) => {
   const w = store.get().waitlist.find((x) => x.id === id);
   if (!w) return;
   if (el.dataset.waitAct === "seat") return run(() => showSeat(id));
-  if (confirm(`Remove ${w.name} from the waitlist?`)) run(() => act("waitlistRemove", { id }));
+  if (confirm(`Remove ${w.name} from the waitlist? (Recorded as left without a table.)`)) run(() => act("waitlistRemove", { id }));
 });
 
 $("todayBtn").addEventListener("click", () => run(() => showToday(0)));

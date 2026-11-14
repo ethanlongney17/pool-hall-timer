@@ -173,3 +173,5 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 }
 .statusbar .version { color: var(--muted); font-size: 13px; }
 .statusbar .warn + .version { margin-left: 0; }
+.wait-new { margin: 0 16px 8px; padding: 10px 12px; border-radius: 10px; background: var(--free-bg); border: 1px solid var(--free-line); color: var(--free-text); font-weight: 700; }
+.wait-est { color: var(--busy-text); font-size: 13px; font-weight: 600; }

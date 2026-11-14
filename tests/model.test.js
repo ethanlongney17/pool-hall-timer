@@ -196,3 +196,77 @@ test("A paused table can be moved and keeps its pause", () => {
   s = M.moveSession(s, { fromTableId: "t1", toTableId: "t2", now: at(13, 20, 35) });
   eq(M.isPaused(M.activeSession(s, "t2")), true);
 });
+
+// --- Wait times ------------------------------------------------------------------
+const MINUTE = 60_000;
+const twoTables = { id: "test", tables: [{ id: "a", name: "A" }, { id: "b", name: "B" }] };
+
+test("Waits are recorded: seated after 18 min, another left", () => {
+  let s = M.waitlistAdd(M.initialState(), { name: "Sam", now: at(13, 20), id: "w1" });
+  s = M.waitlistAdd(s, { name: "Alex", now: at(13, 20, 5), id: "w2" });
+  s = M.seatFromWaitlist(s, { waitId: "w1", tableId: "t3", now: at(13, 20, 18) });
+  s = M.waitlistRemove(s, { id: "w2", now: at(13, 20, 10) });
+  eq(s.waitHistory.length, 2);
+  eq(s.waitHistory[0].outcome, "seated");
+  eq(s.waitHistory[0].tableId, "t3");
+  eq(s.waitHistory[1].outcome, "left");
+  const w = M.waitStats(s, businessDateOf(at(13, 22)));
+  eq(w.seatedCount, 1);
+  eq(w.leftCount, 1);
+  eq(w.averageMs, 18 * MINUTE);
+  eq(w.longestMs, 18 * MINUTE);
+});
+
+test("Typical game is 60 min until there are 10 games to learn from", () => {
+  let s = M.initialState();
+  for (let i = 0; i < 9; i++) {
+    s = M.openTable(s, { tableId: "t1", now: at(13, 12) + i * 50 * MINUTE });
+    s = M.closeTable(s, { tableId: "t1", now: at(13, 12) + i * 50 * MINUTE + 40 * MINUTE });
+  }
+  eq(M.typicalGameMs(s), 60 * MINUTE, "9 games: ");
+  s = M.openTable(s, { tableId: "t2", now: at(13, 20) });
+  s = M.closeTable(s, { tableId: "t2", now: at(13, 20, 40) });
+  eq(M.typicalGameMs(s), 40 * MINUTE, "10 games of 40 min: ");
+});
+
+test("Quick 2-minute games don't drag the typical length down", () => {
+  let s = M.initialState();
+  for (let i = 0; i < 10; i++) {
+    s = M.openTable(s, { tableId: "t1", now: at(13, 12) + i * 50 * MINUTE });
+    s = M.closeTable(s, { tableId: "t1", now: at(13, 12) + i * 50 * MINUTE + 45 * MINUTE });
+    s = M.openTable(s, { tableId: "t2", now: at(13, 12) + i * 50 * MINUTE });
+    s = M.closeTable(s, { tableId: "t2", now: at(13, 12) + i * 50 * MINUTE + 2 * MINUTE });
+  }
+  eq(M.typicalGameMs(s), 45 * MINUTE);
+});
+
+test("Estimates: next table to finish goes to the first in line, then wraps around", () => {
+  let s = M.initialState(twoTables);
+  s = M.openTable(s, { tableId: "a", now: at(13, 20) });
+  s = M.openTable(s, { tableId: "b", now: at(13, 20, 30) });
+  s = M.waitlistAdd(s, { name: "P1", now: at(13, 20, 35) });
+  s = M.waitlistAdd(s, { name: "P2", now: at(13, 20, 36) });
+  s = M.waitlistAdd(s, { name: "P3", now: at(13, 20, 37) });
+  // At 20:40 with 60-min games: A finishes in 20 min, B in 50.
+  const e = M.waitEstimates(s, at(13, 20, 40)).map((ms) => ms / MINUTE);
+  eq(e.join(","), "20,50,80,110", "P1, P2, P3, new party: ");
+});
+
+test("A free table means no wait; a table past its usual length is ~5 min", () => {
+  let s = M.initialState(twoTables);
+  s = M.openTable(s, { tableId: "a", now: at(13, 19) });
+  eq(M.waitEstimates(s, at(13, 20, 40))[0], 0, "B is free: ");
+  s = M.openTable(s, { tableId: "b", now: at(13, 20, 30) });
+  eq(M.waitEstimates(s, at(13, 20, 40))[0], 5 * MINUTE, "A has run 100 min: ");
+});
+
+test("Paused time doesn't count toward a table finishing", () => {
+  let s = M.initialState(twoTables);
+  s = M.openTable(s, { tableId: "a", now: at(13, 20) });
+  s = M.openTable(s, { tableId: "b", now: at(13, 20) });
+  s = M.pauseTable(s, { tableId: "a", now: at(13, 20, 10) }); // A played 10 min, then paused
+  s = M.waitlistAdd(s, { name: "P1", now: at(13, 20, 35) });
+  const e = M.waitEstimates(s, at(13, 20, 40)).map((ms) => ms / MINUTE);
+  eq(e[0], 20, "B (played 40) is next: ");
+  eq(e[1], 50, "A (played 10) after: ");
+});

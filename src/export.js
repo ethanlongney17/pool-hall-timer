@@ -2,7 +2,7 @@
 // Everything here runs on the device: no internet needed.
 
 import { businessDateOf } from "./billing/pricing.js";
-import { sessionCharge, pausedMs } from "./model.js";
+import { sessionCharge, pausedMs, waitStats } from "./model.js";
 
 const pad = (n) => String(n).padStart(2, "0");
 export const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -79,17 +79,22 @@ export function sessionsCsv(state, { night, now }) {
 export const NIGHTS_HEADER = [
   "Night", "Day", "Tables played", "Hours played", "Full charges ($)", "Coupons used", "Coupons ($)",
   "Collected ($)", "Voided", "Still running", "Floor",
+  "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Left waitlist",
 ];
 
 /** One row per night: the figures to check against the POS. Oldest night first. */
 export function nightsCsv(state, { now }) {
   const nights = new Map();
   const floor = floorName(state);
-  for (const s of state.sessions) {
-    const bd = businessDateOf(s.start);
+  const nightOf = (t) => {
+    const bd = businessDateOf(t);
     const k = bd.getTime();
     if (!nights.has(k)) nights.set(k, { bd, played: 0, ms: 0, full: 0, coupons: 0, coupon: 0, charged: 0, voided: 0, running: 0 });
-    const n = nights.get(k);
+    return nights.get(k);
+  };
+  for (const w of state.waitHistory ?? []) nightOf(w.addedAt); // nights with waits but no games still get a row
+  for (const s of state.sessions) {
+    const n = nightOf(s.start);
     if (s.voidedAt) { n.voided++; continue; }
     if (s.end == null) { n.running++; continue; }
     const c = sessionCharge(s, now);
@@ -102,10 +107,15 @@ export function nightsCsv(state, { now }) {
   }
   const rows = [...nights.values()]
     .sort((a, b) => a.bd - b.bd)
-    .map((n) => csvRow([
-      ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
-      dollars(n.coupon), dollars(n.charged), n.voided, n.running, floor,
-    ]));
+    .map((n) => {
+      const w = waitStats(state, n.bd);
+      const mins = (ms) => (w.seatedCount ? (ms / 60_000).toFixed(1) : "");
+      return csvRow([
+        ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
+        dollars(n.coupon), dollars(n.charged), n.voided, n.running, floor,
+        w.seatedCount, mins(w.averageMs), mins(w.longestMs), w.leftCount,
+      ]);
+    });
   return "﻿" + [csvRow(NIGHTS_HEADER), ...rows].join("\r\n") + "\r\n";
 }
 

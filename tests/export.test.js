@@ -201,8 +201,8 @@ test("Nightly totals export: one row per night, collected after coupons", () => 
   s = M.voidSession(s, { sessionId: "v", now: at(14, 15, 1) });
   const rows = parseCsv(nightsCsv(s, { now: at(14, 16) }));
   eq(rows.length, 3, "header + 2 nights: ");
-  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs");
-  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs");
+  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs|0|||0");
+  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs|0|||0");
 });
 
 test("Export lists paused time in its own column", () => {
@@ -276,4 +276,14 @@ test("Upstairs data saved under the old names picks up Table 12-16, keeping its 
   eq(s.tables.map((t) => t.name).join(","), "Table 12,Table 13,Table 14,Table 15,Table 16");
   eq(M.activeSession(s, "u2").id, "g", "running game stays on its table: ");
   eq(M.withHallTableNames(s, HALLS.upstairs), s, "no change needed: ");
+});
+
+test("Nightly totals export includes waitlist stats", () => {
+  let s = M.waitlistAdd(M.initialState(), { name: "Sam", now: at(13, 20), id: "w1" });
+  s = M.waitlistAdd(s, { name: "Alex", now: at(13, 20, 5), id: "w2" });
+  s = M.seatFromWaitlist(s, { waitId: "w1", tableId: "t3", now: at(13, 20, 18) });
+  s = M.waitlistRemove(s, { id: "w2", now: at(13, 20, 10) });
+  const rows = parseCsv(nightsCsv(s, { now: at(13, 22) }));
+  eq(rows[0].slice(11).join("|"), "Seated from waitlist|Average wait (min)|Longest wait (min)|Left waitlist");
+  eq(rows[1].slice(11).join("|"), "1|18.0|18.0|1");
 });

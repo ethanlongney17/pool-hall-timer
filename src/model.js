@@ -31,6 +31,7 @@ export function initialState(hall = HALLS.downstairs) {
     tables: hall.tables.map((t) => ({ ...t })),
     sessions: [], // { id, tableId, name, start, end|null, voidedAt?, voidReason?, log: [] }
     waitlist: [], // { id, name, note, addedAt }
+    waitHistory: [], // { id, name, addedAt, endedAt, outcome, tableId? }
   };
 }
 
@@ -245,15 +246,103 @@ export function waitlistAdd(state, { name, note = "", now, id = newId() }) {
   return { ...state, waitlist: [...state.waitlist, { id, name: n, note: note.trim(), addedAt: now }] };
 }
 
-export function waitlistRemove(state, { id }) {
-  return { ...state, waitlist: state.waitlist.filter((w) => w.id !== id) };
+// Every party that leaves the waitlist is recorded in waitHistory, so real
+// waits can be reported and used to estimate future ones:
+//   { id, name, addedAt, endedAt, outcome: "seated" | "left", tableId? }
+
+function takeOffWaitlist(state, w, now, outcome, tableId) {
+  const record = { id: w.id, name: w.name, addedAt: w.addedAt, endedAt: Math.max(now, w.addedAt), outcome };
+  if (tableId) record.tableId = tableId;
+  return {
+    ...state,
+    waitlist: state.waitlist.filter((x) => x.id !== w.id),
+    waitHistory: [...(state.waitHistory ?? []), record],
+  };
+}
+
+/** Taken off the list without being seated (they left, or a mistake). */
+export function waitlistRemove(state, { id, now = Date.now() }) {
+  const w = state.waitlist.find((x) => x.id === id);
+  if (!w) return state;
+  return takeOffWaitlist(state, w, now, "left");
 }
 
 export function seatFromWaitlist(state, { waitId, tableId, now }) {
   const w = state.waitlist.find((x) => x.id === waitId);
   if (!w) throw new Error("That name is no longer on the waitlist");
   const opened = openTable(state, { tableId, name: w.name, now });
-  return waitlistRemove(opened, { id: waitId });
+  return takeOffWaitlist(opened, w, now, "seated", tableId);
+}
+
+// ---------- Wait estimates ----------
+
+const MIN = 60_000;
+const DEFAULT_GAME_MS = 60 * MIN; // used until there are enough games to learn from
+const MIN_REMAINING_MS = 5 * MIN; // a table past its typical length is "any minute now"
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * How long a game usually lasts here: the median of the last 100 finished games
+ * (at least 10 of them, and ignoring quick 3-minute ones), else 60 minutes.
+ */
+export function typicalGameMs(state) {
+  const lengths = state.sessions
+    .filter((s) => s.end != null && !s.voidedAt)
+    .sort((a, b) => b.end - a.end)
+    .slice(0, 100)
+    .map((s) => s.end - s.start - pausedMs(s, s.end))
+    .filter((ms) => ms >= 3 * MIN);
+  return lengths.length >= 10 ? median(lengths) : DEFAULT_GAME_MS;
+}
+
+/**
+ * Estimated wait for each person on the list, in order, plus for a party
+ * joining now (the last value). 0 means a table is free now.
+ *
+ * Each running table is expected to finish when it reaches the typical game
+ * length (or in about 5 minutes if it's already past it). The 1st person in
+ * line gets the soonest table, the 2nd the next, and so on; once every table
+ * is spoken for, the line wraps around for another game.
+ */
+export function waitEstimates(state, now) {
+  const typical = typicalGameMs(state);
+  let free = 0;
+  const remaining = [];
+  for (const t of state.tables) {
+    const s = activeSession(state, t.id);
+    if (!s) {
+      free++;
+      continue;
+    }
+    const played = now - s.start - pausedMs(s, now);
+    remaining.push(Math.max(typical - played, MIN_REMAINING_MS));
+  }
+  remaining.sort((a, b) => a - b);
+  const estimateFor = (position) => {
+    if (position < free) return 0;
+    const j = position - free;
+    if (!remaining.length) return typical; // no tables at all: shouldn't happen
+    return remaining[j % remaining.length] + typical * Math.floor(j / remaining.length);
+  };
+  return Array.from({ length: state.waitlist.length + 1 }, (_, i) => estimateFor(i));
+}
+
+/** Real waits for one business night: who was seated, how long they waited, who left. */
+export function waitStats(state, businessDate) {
+  const key = businessDate.getTime();
+  const tonight = (state.waitHistory ?? []).filter((w) => businessDateOf(w.addedAt).getTime() === key);
+  const seated = tonight.filter((w) => w.outcome === "seated").map((w) => w.endedAt - w.addedAt);
+  return {
+    seatedCount: seated.length,
+    leftCount: tonight.filter((w) => w.outcome === "left").length,
+    averageMs: seated.length ? seated.reduce((a, b) => a + b, 0) / seated.length : 0,
+    longestMs: seated.length ? Math.max(...seated) : 0,
+  };
 }
 
 export const actions = {
