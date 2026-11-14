@@ -1,7 +1,7 @@
 import { createLocalStore } from "./store/local-store.js";
-import { activeSession, daySummary } from "./model.js";
+import { activeSession, daySummary, sessionCharge } from "./model.js";
 import { priceSession, rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
-import { sessionsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
+import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 const store = createLocalStore();
 const $ = (id) => document.getElementById(id);
@@ -141,7 +141,11 @@ function showSheet(spec) {
 function closeSheet() {
   if (sheet.open) sheet.close();
 }
-sheet.addEventListener("close", () => (current = null));
+// The close event arrives a moment after close(); if another panel opened in
+// between, it must keep working, so only forget the panel if none is showing.
+sheet.addEventListener("close", () => {
+  if (!sheet.open) current = null;
+});
 sheet.addEventListener("click", (e) => {
   if (e.target === sheet) return closeSheet(); // tap outside the panel
   const el = e.target.closest("[data-act]");
@@ -232,21 +236,40 @@ function receiptLines(price) {
     .join("");
 }
 
-function showReceipt(sessionId) {
+function showReceipt(sessionId, { back } = {}) {
   const s = store.get().sessions.find((x) => x.id === sessionId);
   if (!s || s.end == null) return closeSheet();
-  const price = priceSession(s.start, s.end);
+  const c = sessionCharge(s, Date.now());
+  const done = back ? `<button class="btn primary big" data-act="back">Back to totals</button>`
+    : `<button class="btn primary big" data-act="close">Done</button>`;
   showSheet({
     render: () => `<div class="sheet">
-      ${head(`${esc(tableName(s.tableId))} closed`, s.name ? esc(s.name) : "")}
-      <div class="big-num">${formatCents(price.totalCents)}</div>
-      <dl class="kv"><dt>Time played</dt><dd>${formatDuration(price.ms)}</dd>
+      ${head(`${esc(tableName(s.tableId))} ${s.voidedAt ? "voided" : "closed"}`, s.name ? esc(s.name) : "")}
+      ${s.discount ? `<div class="was">${formatCents(c.fullCents)}</div>` : ""}
+      <div class="big-num">${formatCents(c.chargedCents)}</div>
+      ${s.discount ? `<div class="coupon-tag">${esc(s.discount.label)} applied: −${formatCents(c.discountCents)}</div>` : ""}
+      <dl class="kv"><dt>Time played</dt><dd>${formatDuration(c.price.ms)}</dd>
         <dt>Started</dt><dd>${fmtTime(s.start)}</dd><dt>Stopped</dt><dd>${fmtTime(s.end)}</dd></dl>
-      <div class="lines">${receiptLines(price)}</div>
-      <button class="btn primary big" data-act="close">Done</button>
-      <button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>
+      <div class="lines">${receiptLines(c.price)}
+        ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.percent}% off)</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}</div>
+      ${s.voidedAt ? "" : s.discount
+        ? `<button class="btn" data-act="uncoupon">Remove coupon</button>`
+        : `<button class="btn coupon" data-act="coupon">Apply half-off coupon</button>`}
+      ${done}
+      ${back || s.voidedAt ? "" : `<button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>`}
     </div>`,
     handlers: {
+      coupon: () => {
+        act("applyDiscount", { sessionId, percent: 50, label: "Half-off coupon" });
+        showReceipt(sessionId, { back });
+        toast("Half-off coupon applied");
+      },
+      uncoupon: () => {
+        act("removeDiscount", { sessionId });
+        showReceipt(sessionId, { back });
+        toast("Coupon removed");
+      },
+      back: () => back?.(),
       reopen: () => {
         act("reopenSession", { sessionId });
         closeSheet();
@@ -325,26 +348,30 @@ function showToday(dayOffset = 0) {
       day.setDate(day.getDate() + dayOffset);
       const sum = daySummary(store.get(), day, now);
       const openStarts = sum.open.map((s) => s.start).join(",");
-      const row = (s, cls = "") => `<tr class="${cls}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
+      const row = (s, cls = "") => `<tr class="tap ${cls}" data-act="receipt" data-id="${s.id}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
         <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.end - s.start)}</td>
-        <td class="amt">${cls ? "void" : formatCents(s.price.totalCents)}</td></tr>`;
+        <td class="amt">${cls ? "void" : `${s.discount ? `<span class="half">½ off</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
       return `<div class="sheet">
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
         <div class="big-num">${formatCents(sum.closedTotalCents)}</div>
-        <div class="sub" style="margin-top:-4px">from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
+        <div class="sub" style="margin-top:-4px">collected from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
+        ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
+          <dt>Half-off coupons (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
         ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-starts="${openStarts}"></dd>
           <dt>Total if all closed now</dt><dd data-live="charge" data-base="${sum.closedTotalCents}" data-starts="${openStarts}"></dd></dl>` : ""}
         <div class="report"><table><thead><tr><th>Table</th><th>Name</th><th>Time</th><th>Played</th><th class="amt">Charged</th></tr></thead>
           <tbody>${sum.closed.map((s) => row(s)).join("")}${sum.voided.map((s) => row({ ...s, end: s.end }, "void")).join("")}
           ${sum.closed.length + sum.voided.length ? "" : `<tr><td colspan="5" class="empty">Nothing closed yet.</td></tr>`}</tbody></table></div>
+        ${sum.closed.length ? `<div class="sub">Tap a row to see its receipt or add a coupon.</div>` : ""}
         <div class="row"><button class="btn" data-act="prev">◀ Previous day</button>
           <button class="btn" data-act="next" ${dayOffset >= 0 ? "disabled" : ""}>Next day ▶</button></div>
         <div class="export">
           <div class="export-title">Save a copy for Numbers or Files (works without Wi-Fi)</div>
           <div class="row">
             <button class="btn" data-act="csvNight">Export this night</button>
-            <button class="btn" data-act="csvAll">Export all nights</button>
+            <button class="btn" data-act="csvAll">Export every table, all nights</button>
           </div>
+          <button class="btn" data-act="csvNights">Export nightly totals (one row per night, for the POS)</button>
           <div class="row">
             <button class="btn" data-act="backup">Save full backup</button>
             <button class="btn" data-act="restore">Restore from backup…</button>
@@ -353,6 +380,7 @@ function showToday(dayOffset = 0) {
       </div>`;
     },
     handlers: {
+      receipt: ({ id }) => showReceipt(id, { back: () => showToday(dayOffset) }),
       prev: () => showToday(dayOffset - 1),
       next: () => dayOffset < 0 && showToday(dayOffset + 1),
       csvNight: () => {
@@ -364,6 +392,10 @@ function showToday(dayOffset = 0) {
       csvAll: () => {
         const csv = sessionsCsv(store.get(), { now: Date.now() });
         return saveAndReport(`pool-tables-all-nights-to-${ymd(new Date())}.csv`, csv, "text/csv");
+      },
+      csvNights: () => {
+        const csv = nightsCsv(store.get(), { now: Date.now() });
+        return saveAndReport(`pool-tables-nightly-totals-to-${ymd(new Date())}.csv`, csv, "text/csv");
       },
       backup: () => {
         const now = new Date();

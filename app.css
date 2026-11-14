@@ -137,6 +137,13 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .report .amt { text-align: right; }
 .report .void td { color: var(--muted); text-decoration: line-through; }
 
+.was { font-size: 22px; color: var(--muted); text-decoration: line-through; font-variant-numeric: tabular-nums; margin-bottom: -10px; }
+.coupon-tag { color: var(--busy-text); font-weight: 700; margin-top: -6px; }
+.btn.coupon { border-color: var(--busy-line); color: var(--busy-text); background: var(--busy-bg); min-height: 52px; }
+.half { font-size: 12px; font-weight: 700; color: var(--busy-text); border: 1px solid var(--busy-line); border-radius: 6px; padding: 1px 5px; }
+.report tr.tap { cursor: pointer; }
+.report tr.tap:active td { background: var(--panel-2); }
+
 .export { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
 .export-title { color: var(--muted); font-size: 14px; font-weight: 600; }
 

@@ -40,25 +40,45 @@ function requireTable(state, tableId) {
   if (!state.tables.some((t) => t.id === tableId)) throw new Error(`Unknown table ${tableId}`);
 }
 
+/**
+ * What a session costs: the full time charge, any coupon taken off it, and
+ * what's actually collected. Voided sessions collect nothing.
+ */
+export function sessionCharge(s, now) {
+  const end = s.end ?? Math.max(now, s.start);
+  const price = priceSession(s.start, end);
+  const fullCents = price.totalCents;
+  const pct = s.discount?.percent ?? 0;
+  const afterCoupon = Math.round((fullCents * (100 - pct)) / 100);
+  const discountCents = fullCents - afterCoupon;
+  return { price, fullCents, discountCents, chargedCents: s.voidedAt ? 0 : afterCoupon };
+}
+
 /** Totals for one business day (the 6am-to-6am "night"), for matching the till. */
 export function daySummary(state, businessDate, now) {
   const key = businessDate.getTime();
   const inDay = state.sessions.filter((s) => businessDateOf(s.start).getTime() === key);
+  const withCharge = (s) => {
+    const c = sessionCharge(s, now);
+    return { ...s, price: c.price, charge: c };
+  };
   const closed = inDay
     .filter((s) => s.end != null && !s.voidedAt)
-    .map((s) => ({ ...s, price: priceSession(s.start, s.end) }))
+    .map(withCharge)
     .sort((a, b) => b.end - a.end);
-  const open = inDay
-    .filter((s) => s.end == null && !s.voidedAt)
-    .map((s) => ({ ...s, price: priceSession(s.start, Math.max(now, s.start)) }));
-  const voided = inDay.filter((s) => s.voidedAt);
-  const sum = (list) => list.reduce((a, s) => a + s.price.totalCents, 0);
+  const open = inDay.filter((s) => s.end == null && !s.voidedAt).map(withCharge);
+  const voided = inDay.filter((s) => s.voidedAt).map(withCharge);
+  const sum = (list, field) => list.reduce((a, s) => a + s.charge[field], 0);
+  const coupons = closed.filter((s) => s.discount);
   return {
     closed,
     open,
     voided,
-    closedTotalCents: sum(closed),
-    openRunningCents: sum(open),
+    closedTotalCents: sum(closed, "chargedCents"), // what should be in the till
+    fullTotalCents: sum(closed, "fullCents"), // before coupons
+    couponCents: sum(closed, "discountCents"),
+    couponCount: coupons.length,
+    openRunningCents: sum(open, "chargedCents"),
     totalMs: closed.reduce((a, s) => a + s.price.ms, 0),
   };
 }
@@ -92,7 +112,28 @@ export function reopenSession(state, { sessionId, now }) {
   if (activeSession(state, s.tableId)) {
     throw new Error(`${tableName(state, s.tableId)} has been opened again since; can't reopen`);
   }
-  return replaceSession(state, withLog({ ...s, end: null }, { at: now, what: "reopened" }));
+  // A coupon applies to a finished game, so reopening takes it off.
+  const { discount, ...rest } = s;
+  return replaceSession(state, withLog({ ...rest, end: null }, { at: now, what: "reopened" }));
+}
+
+/** Coupon (e.g. half off) on a closed table. Replaces any coupon already on it. */
+export function applyDiscount(state, { sessionId, percent = 50, label = "Half-off coupon", now }) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s || s.end == null) throw new Error("Close the table before applying a coupon");
+  if (s.voidedAt) throw new Error("This table was voided; there's nothing to discount");
+  if (!(percent > 0 && percent <= 100)) throw new Error("Coupon must be between 1% and 100% off");
+  return replaceSession(
+    state,
+    withLog({ ...s, discount: { percent, label, at: now } }, { at: now, what: `coupon: ${label}` }),
+  );
+}
+
+export function removeDiscount(state, { sessionId, now }) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s?.discount) throw new Error("There's no coupon on this table");
+  const { discount, ...rest } = s;
+  return replaceSession(state, withLog(rest, { at: now, what: "coupon removed" }));
 }
 
 export function moveSession(state, { fromTableId, toTableId, now }) {
@@ -149,4 +190,6 @@ export const actions = {
   waitlistAdd,
   waitlistRemove,
   seatFromWaitlist,
+  applyDiscount,
+  removeDiscount,
 };
