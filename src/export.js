@@ -2,7 +2,7 @@
 // Everything here runs on the device: no internet needed.
 
 import { businessDateOf } from "./billing/pricing.js";
-import { sessionCharge } from "./model.js";
+import { sessionCharge, pausedMs } from "./model.js";
 
 const pad = (n) => String(n).padStart(2, "0");
 export const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -27,7 +27,7 @@ const csvRow = (cells) => cells.map(csvCell).join(",");
 
 export const CSV_HEADER = [
   "Night", "Day", "Table", "Customer", "Started", "Stopped", "Time played", "Minutes", "Rate",
-  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status",
+  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)",
 ];
 
 /**
@@ -60,14 +60,14 @@ export function sessionsCsv(state, { night, now }) {
     return csvRow([
       ymd(bd), WEEKDAYS[bd.getDay()], tableName(s.tableId), s.name, dateTime(s.start),
       running ? "" : dateTime(s.end), hms(c.price.ms), (c.price.ms / 60000).toFixed(1), rates,
-      dollars(full), dollars(coupon), dollars(c.chargedCents), status,
+      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "",
     ]);
   });
 
   const lines = [csvRow(CSV_HEADER), ...rows];
   if (night) {
     lines.push("", csvRow(["Total (closed tables)", "", "", "", "", "", "", "", "",
-      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), ""]));
+      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", ""]));
   }
   // The byte-order mark makes Excel read the file as UTF-8; Numbers ignores it.
   return "﻿" + lines.join("\r\n") + "\r\n";

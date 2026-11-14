@@ -1,6 +1,6 @@
 import { createLocalStore } from "./store/local-store.js";
-import { activeSession, daySummary, sessionCharge, couponRate } from "./model.js";
-import { priceSession, rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
+import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs } from "./model.js";
+import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 const store = createLocalStore();
@@ -52,18 +52,26 @@ function tick() {
   const w = rateAt(now);
   $("rate").textContent = `Now ${fmtRate(w.centsPerHour)} until ${fmtTime(w.end)}`;
 
+  // Sessions are looked up by id so paused time is left out of timers and charges.
+  const byId = new Map(store.get().sessions.map((s) => [s.id, s]));
+  const charge = (id) => {
+    const s = byId.get(id);
+    return s ? sessionCharge(s, now) : null;
+  };
   document.querySelectorAll("[data-live]").forEach((el) => {
-    const starts = (el.dataset.starts || "").split(",").filter(Boolean).map(Number);
+    const ids = (el.dataset.sessions || "").split(",").filter(Boolean);
     switch (el.dataset.live) {
-      case "elapsed":
-        el.textContent = formatDuration(now - starts[0]);
+      case "elapsed": {
+        const c = charge(ids[0]);
+        if (c) el.textContent = formatDuration(c.price.ms);
         break;
+      }
       case "wait":
-        el.textContent = shortDur(now - starts[0]);
+        el.textContent = shortDur(now - Number(el.dataset.starts));
         break;
       case "charge": {
         const base = Number(el.dataset.base || 0);
-        const cents = starts.reduce((a, s) => a + priceSession(s, Math.max(now, s)).totalCents, base);
+        const cents = ids.reduce((a, id) => a + (charge(id)?.chargedCents ?? 0), base);
         el.textContent = formatCents(cents);
         break;
       }
@@ -81,11 +89,12 @@ function renderTables(state) {
         return `<button class="table-card free" data-table="${t.id}">
           <span class="t-name">${esc(t.name)}</span><span class="t-state">Available</span></button>`;
       }
-      return `<button class="table-card busy" data-table="${t.id}">
-        <span class="t-name">${esc(t.name)}</span>
+      const paused = isPaused(s);
+      return `<button class="table-card busy${paused ? " paused" : ""}" data-table="${t.id}">
+        <span class="t-name">${esc(t.name)}${paused ? ` <span class="paused-tag">Paused</span>` : ""}</span>
         <span class="t-who">${esc(s.name)}</span>
-        <span class="t-time" data-live="elapsed" data-starts="${s.start}"></span>
-        <span class="t-charge" data-live="charge" data-starts="${s.start}"></span></button>`;
+        <span class="t-time" data-live="elapsed" data-sessions="${s.id}"></span>
+        <span class="t-charge" data-live="charge" data-sessions="${s.id}"></span></button>`;
     })
     .join("");
 }
@@ -110,11 +119,12 @@ function renderStatus(state) {
   const now = Date.now();
   const sum = daySummary(state, businessDateOf(now), now);
   const running = state.tables.filter((t) => activeSession(state, t.id));
-  const openStarts = sum.open.map((s) => s.start).join(",");
+  const openIds = sum.open.map((s) => s.id).join(",");
+  const pausedCount = running.filter((t) => isPaused(activeSession(state, t.id))).length;
   $("status").innerHTML = `
-    <span>Tables running: <b>${running.length}</b> of ${state.tables.length}</span>
+    <span>Tables running: <b>${running.length}</b> of ${state.tables.length}${pausedCount ? ` (${pausedCount} paused)` : ""}</span>
     <span>Waiting: <b>${state.waitlist.length}</b></span>
-    <span>Tonight so far: <b data-live="charge" data-base="${sum.closedTotalCents}" data-starts="${openStarts}"></b></span>
+    <span>Tonight so far: <b data-live="charge" data-base="${sum.closedTotalCents}" data-sessions="${openIds}"></b></span>
     ${store.kind === "local" ? `<span class="warn">Saved on this device only</span>` : ""}`;
 }
 
@@ -197,12 +207,20 @@ function showOpen(tableId) {
 function showRunning(tableId) {
   const s = activeSession(store.get(), tableId);
   if (!s) return;
+  const paused = isPaused(s);
+  const pausedAt = paused ? s.pauses[s.pauses.length - 1].from : null;
+  const pausedSoFar = pausedMs(s, Date.now());
   showSheet({
     render: () => `<div class="sheet">
       ${head(esc(tableName(tableId)), `${s.name ? esc(s.name) + " · " : ""}Started ${fmtTime(s.start)}`)}
-      <div class="big-num amber" data-live="elapsed" data-starts="${s.start}"></div>
-      <dl class="kv"><dt>Charge so far</dt><dd data-live="charge" data-starts="${s.start}"></dd>
-        <dt>Rate now</dt><dd>${fmtRate(rateAt(Date.now()).centsPerHour)}</dd></dl>
+      ${paused ? `<div class="paused-banner">Timer paused at ${fmtTime(pausedAt)}. Not being charged.</div>` : ""}
+      <div class="big-num ${paused ? "paused-num" : "amber"}" data-live="elapsed" data-sessions="${s.id}"></div>
+      <dl class="kv"><dt>${paused ? "Total so far" : "Charge so far"}</dt><dd data-live="charge" data-sessions="${s.id}"></dd>
+        <dt>Rate now</dt><dd>${fmtRate(rateAt(Date.now()).centsPerHour)}</dd>
+        ${pausedSoFar >= 1000 && !paused ? `<dt>Paused so far</dt><dd>${formatDuration(pausedSoFar)}</dd>` : ""}</dl>
+      ${paused
+        ? `<button class="btn primary big" data-act="resume">Resume timer</button>`
+        : `<button class="btn big pause" data-act="pause">Pause timer</button>`}
       <button class="btn danger big" data-act="stop">Stop timer &amp; close table</button>
       <div class="row">
         <button class="btn" data-act="move">Move to another table</button>
@@ -211,6 +229,16 @@ function showRunning(tableId) {
       <button class="btn link" data-act="void">Opened by mistake? Void this table</button>
     </div>`,
     handlers: {
+      pause: () => {
+        act("pauseTable", { tableId });
+        showRunning(tableId);
+        toast(`${tableName(tableId)} paused`);
+      },
+      resume: () => {
+        act("resumeTable", { tableId });
+        showRunning(tableId);
+        toast(`${tableName(tableId)} resumed`);
+      },
       stop: () => {
         act("closeTable", { tableId });
         showReceipt(s.id);
@@ -230,7 +258,7 @@ function showRunning(tableId) {
 function receiptLines(price) {
   return price.segments
     .map(
-      (seg) => `<div><span>${fmtTime(seg.start)}–${fmtTime(seg.end)} · ${shortDur(seg.ms)} @ ${fmtRate(seg.centsPerHour)}</span>
+      (seg) => `<div><span>${fmtTime(seg.start)}–${fmtTime(seg.end)} · ${seg.ms < 60_000 ? `${Math.round(seg.ms / 1000)}s` : shortDur(seg.ms)} @ ${fmtRate(seg.centsPerHour)}</span>
         <span>${formatCents(seg.cents)}</span></div>`,
     )
     .join("");
@@ -250,6 +278,7 @@ function showReceipt(sessionId, { back } = {}) {
       <div class="big-num">${formatCents(c.chargedCents)}</div>
       ${s.discount ? `<div class="coupon-tag">${esc(s.discount.label)} applied: −${formatCents(c.discountCents)}</div>` : ""}
       <dl class="kv"><dt>Time played</dt><dd>${formatDuration(c.price.ms)}</dd>
+        ${pausedMs(s, s.end) >= 1000 ? `<dt>Paused (not charged)</dt><dd>${formatDuration(pausedMs(s, s.end))}</dd>` : ""}
         <dt>Started</dt><dd>${fmtTime(s.start)}</dd><dt>Stopped</dt><dd>${fmtTime(s.end)}</dd></dl>
       <div class="lines">${receiptLines(c.price)}
         ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.minutes
@@ -350,9 +379,9 @@ function showToday(dayOffset = 0) {
       const day = businessDateOf(now);
       day.setDate(day.getDate() + dayOffset);
       const sum = daySummary(store.get(), day, now);
-      const openStarts = sum.open.map((s) => s.start).join(",");
+      const openIds = sum.open.map((s) => s.id).join(",");
       const row = (s, cls = "") => `<tr class="tap ${cls}" data-act="receipt" data-id="${s.id}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
-        <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.end - s.start)}</td>
+        <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.price.ms)}</td>
         <td class="amt">${cls ? "void" : `${s.discount ? `<span class="half">coupon</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
       return `<div class="sheet">
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
@@ -360,8 +389,8 @@ function showToday(dayOffset = 0) {
         <div class="sub" style="margin-top:-4px">collected from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
         ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
           <dt>Coupons used (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
-        ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-starts="${openStarts}"></dd>
-          <dt>Total if all closed now</dt><dd data-live="charge" data-base="${sum.closedTotalCents}" data-starts="${openStarts}"></dd></dl>` : ""}
+        ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-sessions="${openIds}"></dd>
+          <dt>Total if all closed now</dt><dd data-live="charge" data-base="${sum.closedTotalCents}" data-sessions="${openIds}"></dd></dl>` : ""}
         <div class="report"><table><thead><tr><th>Table</th><th>Name</th><th>Time</th><th>Played</th><th class="amt">Charged</th></tr></thead>
           <tbody>${sum.closed.map((s) => row(s)).join("")}${sum.voided.map((s) => row({ ...s, end: s.end }, "void")).join("")}
           ${sum.closed.length + sum.voided.length ? "" : `<tr><td colspan="5" class="empty">Nothing closed yet.</td></tr>`}</tbody></table></div>

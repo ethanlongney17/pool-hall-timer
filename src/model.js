@@ -8,7 +8,7 @@
 // elapsed time and charge are always computed from it. A refresh, crash or
 // dead battery cannot lose time.
 
-import { priceSession, businessDateOf } from "./billing/pricing.js";
+import { priceIntervals, businessDateOf } from "./billing/pricing.js";
 
 export const TABLE_COUNT = 11;
 
@@ -44,9 +44,35 @@ function requireTable(state, tableId) {
  * What a session costs: the full time charge, any coupon taken off it, and
  * what's actually collected. Voided sessions collect nothing.
  */
+/** Is this table's timer paused right now? */
+export function isPaused(s) {
+  const last = s.pauses?.[s.pauses.length - 1];
+  return !!last && last.to == null;
+}
+
+/** Total time spent paused, up to `now` for a pause still going. */
+export function pausedMs(s, now) {
+  const end = s.end ?? now;
+  return (s.pauses ?? []).reduce((a, p) => a + Math.max(0, Math.min(p.to ?? end, end) - p.from), 0);
+}
+
+/** The stretches of actual play, leaving out pauses: [[from, to], ...]. */
+export function playedIntervals(s, end) {
+  const out = [];
+  let t = s.start;
+  for (const p of s.pauses ?? []) {
+    const pauseFrom = Math.min(p.from, end);
+    if (pauseFrom > t) out.push([t, pauseFrom]);
+    if (p.to == null) return out; // still paused
+    t = Math.max(t, p.to);
+  }
+  if (end > t) out.push([t, end]);
+  return out;
+}
+
 export function sessionCharge(s, now) {
   const end = s.end ?? Math.max(now, s.start);
-  const price = priceSession(s.start, end);
+  const price = priceIntervals(playedIntervals(s, end));
   const fullCents = price.totalCents;
   const discountCents = Math.min(fullCents, couponValue(s.discount, price, fullCents));
   return { price, fullCents, discountCents, chargedCents: s.voidedAt ? 0 : fullCents - discountCents };
@@ -115,7 +141,31 @@ export function closeTable(state, { tableId, now }) {
   const s = activeSession(state, tableId);
   if (!s) throw new Error(`${tableName(state, tableId)} isn't running`);
   const end = Math.max(now, s.start);
-  return replaceSession(state, withLog({ ...s, end }, { at: now, what: "closed" }));
+  // Closing a paused table ends the pause there; the paused time isn't charged.
+  const pauses = isPaused(s)
+    ? s.pauses.map((p, i) => (i === s.pauses.length - 1 ? { ...p, to: Math.max(end, p.from) } : p))
+    : s.pauses;
+  return replaceSession(state, withLog({ ...s, end, ...(pauses ? { pauses } : {}) }, { at: now, what: "closed" }));
+}
+
+/** Stop the clock on a running table (charge freezes) until it's resumed. */
+export function pauseTable(state, { tableId, now }) {
+  const s = activeSession(state, tableId);
+  if (!s) throw new Error(`${tableName(state, tableId)} isn't running`);
+  if (isPaused(s)) throw new Error(`${tableName(state, tableId)} is already paused`);
+  const from = Math.max(now, s.start);
+  return replaceSession(
+    state,
+    withLog({ ...s, pauses: [...(s.pauses ?? []), { from, to: null }] }, { at: now, what: "paused" }),
+  );
+}
+
+export function resumeTable(state, { tableId, now }) {
+  const s = activeSession(state, tableId);
+  if (!s) throw new Error(`${tableName(state, tableId)} isn't running`);
+  if (!isPaused(s)) throw new Error(`${tableName(state, tableId)} isn't paused`);
+  const pauses = s.pauses.map((p, i) => (i === s.pauses.length - 1 ? { ...p, to: Math.max(now, p.from) } : p));
+  return replaceSession(state, withLog({ ...s, pauses }, { at: now, what: "resumed" }));
 }
 
 /** Undo a close ("resume play"): the timer continues from the original start. */
@@ -204,5 +254,7 @@ export const actions = {
   waitlistRemove,
   seatFromWaitlist,
   applyDiscount,
+  pauseTable,
+  resumeTable,
   removeDiscount,
 };

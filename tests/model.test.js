@@ -126,3 +126,73 @@ test("Actions never change the previous state (safe to undo/sync)", () => {
   M.openTable(s0, { tableId: "t1", now: at(13, 20) });
   eq(JSON.stringify(s0), snapshot);
 });
+
+// --- Pause / resume ------------------------------------------------------------------
+
+test("Pause 15 min in the middle: 20:00-21:15 with a 20:30-20:45 pause = 60 min = $25.00", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20), id: "a" });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 30) });
+  eq(M.isPaused(M.activeSession(s, "t1")), true);
+  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 45) });
+  eq(M.isPaused(M.activeSession(s, "t1")), false);
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 21, 15) });
+  const c = M.sessionCharge(s.sessions[0], 0);
+  eq(c.chargedCents, 2500);
+  eq(c.price.ms, 60 * 60_000);
+  eq(M.pausedMs(s.sessions[0], 0), 15 * 60_000);
+});
+
+test("While paused, the charge stays frozen", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20), id: "a" });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 30) });
+  const later = M.sessionCharge(M.activeSession(s, "t1"), at(13, 22));
+  eq(later.chargedCents, 1250);
+  eq(later.price.ms, 30 * 60_000);
+  const sum = M.daySummary(s, businessDateOf(at(13, 22)), at(13, 22));
+  eq(sum.openRunningCents, 1250);
+});
+
+test("Closing a paused table charges only up to the pause", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20), id: "a" });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 30) });
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 21) });
+  eq(M.sessionCharge(s.sessions[0], 0).chargedCents, 1250);
+  eq(M.pausedMs(s.sessions[0], 0), 30 * 60_000);
+  eq(M.activeSession(s, "t1"), undefined);
+});
+
+test("Pause across 6pm: Tue 5:30-5:50 at $15 + 6:10-6:30 at $22 = $12.33", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(10, 17, 30) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(10, 17, 50) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(10, 18, 10) });
+  s = M.closeTable(s, { tableId: "t1", now: at(10, 18, 30) });
+  const c = M.sessionCharge(s.sessions[0], 0);
+  eq(c.chargedCents, 1233);
+  eq(c.price.segments.reduce((a, x) => a + x.cents, 0), 1233, "receipt lines add up: ");
+});
+
+test("Several pauses add up", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 10) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 40) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 50) });
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 21) });
+  eq(M.sessionCharge(s.sessions[0], 0).price.ms, 40 * 60_000);
+  eq(M.sessionCharge(s.sessions[0], 0).chargedCents, 1667); // 40 min at $25 = 16.666
+});
+
+test("Can't pause twice, or resume a table that isn't paused", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20) });
+  throws(() => M.resumeTable(s, { tableId: "t1", now: at(13, 20, 5) }), "resume running");
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 10) });
+  throws(() => M.pauseTable(s, { tableId: "t1", now: at(13, 20, 15) }), "pause twice");
+  throws(() => M.pauseTable(M.initialState(), { tableId: "t2", now: at(13, 20) }), "pause free table");
+});
+
+test("A paused table can be moved and keeps its pause", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 30) });
+  s = M.moveSession(s, { fromTableId: "t1", toTableId: "t2", now: at(13, 20, 35) });
+  eq(M.isPaused(M.activeSession(s, "t2")), true);
+});

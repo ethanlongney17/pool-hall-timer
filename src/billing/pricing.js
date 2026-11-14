@@ -82,25 +82,37 @@ export function rateAt(t, schedule = DEFAULT_SCHEDULE) {
  * @returns {{ totalCents: number, ms: number, segments: Array<{start: Date, end: Date, centsPerHour: number, ms: number, cents: number}> }}
  */
 export function priceSession(start, end, schedule = DEFAULT_SCHEDULE) {
-  const s = new Date(start).getTime();
-  const e = new Date(end).getTime();
-  if (!Number.isFinite(s) || !Number.isFinite(e)) throw new Error("Invalid start or end time");
-  if (e < s) throw new Error("End time is before start time");
-  if (e - s > 7 * MS_PER_DAY) throw new Error("Session longer than 7 days; check the times");
+  return priceIntervals([[start, end]], schedule);
+}
 
-  // 1. Split [s, e) at every rate change, merging neighbors with the same rate.
+/**
+ * Price several stretches of play as one bill (a game with pauses in it).
+ * Paused time between the stretches isn't charged. Rounded once, on the total.
+ * @param {Array<[Date|number, Date|number]>} intervals  in time order
+ */
+export function priceIntervals(intervals, schedule = DEFAULT_SCHEDULE) {
+  // 1. Split each stretch at every rate change, merging touching pieces with the same rate.
   const raw = [];
-  let t = s;
-  while (t < e) {
-    const w = rateAt(t, schedule);
-    const segEnd = Math.min(w.end.getTime(), e);
-    const last = raw[raw.length - 1];
-    if (last && last.centsPerHour === w.centsPerHour && last.end === t) {
-      last.end = segEnd;
-    } else {
-      raw.push({ start: t, end: segEnd, centsPerHour: w.centsPerHour });
+  let total = 0;
+  for (const [start, end] of intervals) {
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e)) throw new Error("Invalid start or end time");
+    if (e < s) throw new Error("End time is before start time");
+    total += e - s;
+    if (total > 7 * MS_PER_DAY) throw new Error("Session longer than 7 days; check the times");
+    let t = s;
+    while (t < e) {
+      const w = rateAt(t, schedule);
+      const segEnd = Math.min(w.end.getTime(), e);
+      const last = raw[raw.length - 1];
+      if (last && last.centsPerHour === w.centsPerHour && last.end === t) {
+        last.end = segEnd;
+      } else {
+        raw.push({ start: t, end: segEnd, centsPerHour: w.centsPerHour });
+      }
+      t = segEnd;
     }
-    t = segEnd;
   }
 
   // 2. Exact charge in "cent-milliseconds per hour" (integers, no float drift),
@@ -116,7 +128,7 @@ export function priceSession(start, end, schedule = DEFAULT_SCHEDULE) {
     return { start: new Date(seg.start), end: new Date(seg.end), centsPerHour: seg.centsPerHour, ms, cents };
   });
 
-  return { totalCents: roundedSoFar, ms: e - s, segments };
+  return { totalCents: roundedSoFar, ms: total, segments };
 }
 
 export function formatCents(cents) {

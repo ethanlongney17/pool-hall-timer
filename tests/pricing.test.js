@@ -100,3 +100,11 @@ test("Durations are charged on real elapsed time", () => {
   eq(r.ms, 90 * MIN);
   eq(r.totalCents, 3750);
 });
+
+import { priceIntervals } from "../src/billing/pricing.js";
+test("Two separate stretches are priced together and rounded once", () => {
+  // 30s at $15 + 30s at $22 (with a gap between) = 12.5c + 18.33c = 30.83c -> 31c
+  const r = priceIntervals([[at(10, 17, 59, 0), at(10, 17, 59, 30)], [at(10, 18, 5, 0), at(10, 18, 5, 30)]]);
+  eq(r.totalCents, 31);
+  eq(r.ms, 60_000);
+});

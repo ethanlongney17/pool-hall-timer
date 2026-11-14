@@ -137,6 +137,14 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .report .amt { text-align: right; }
 .report .void td { color: var(--muted); text-decoration: line-through; }
 
+.table-card.busy.paused { background: #16263a; border-color: #5b8fd6; border-style: dashed; }
+.table-card.paused .t-time, .table-card.paused .t-charge { color: #9cc2f2; }
+.paused-tag { font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; vertical-align: middle;
+  background: #5b8fd6; color: #0d141b; border-radius: 6px; padding: 2px 6px; }
+.paused-banner { background: #16263a; border: 1px solid #5b8fd6; color: #cfe1f8; border-radius: 10px; padding: 10px 12px; font-weight: 600; }
+.big-num.paused-num { color: #9cc2f2; }
+.btn.pause { border-color: #5b8fd6; color: #cfe1f8; background: #16263a; }
+
 .was { font-size: 22px; color: var(--muted); text-decoration: line-through; font-variant-numeric: tabular-nums; margin-bottom: -10px; }
 .coupon-tag { color: var(--busy-text); font-weight: 700; margin-top: -6px; }
 .btn.coupon { border-color: var(--busy-line); color: var(--busy-text); background: var(--busy-bg); min-height: 52px; }

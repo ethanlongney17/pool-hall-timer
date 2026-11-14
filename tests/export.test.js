@@ -204,3 +204,15 @@ test("Nightly totals export: one row per night, collected after coupons", () => 
   eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0");
   eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0");
 });
+
+test("Export lists paused time in its own column", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 30) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 45) });
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 21, 15) });
+  const rows = parseCsv(sessionsCsv(s, { night: businessDateOf(at(13, 22)), now: at(13, 22) }));
+  eq(rows[0][13], "Paused (not charged)");
+  eq(rows[1][6], "1:00:00", "time played excludes the pause: ");
+  eq(rows[1][11], "25.00");
+  eq(rows[1][13], "0:15:00");
+});
