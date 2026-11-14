@@ -9,6 +9,7 @@
 // dead battery cannot lose time.
 
 import { priceIntervals, businessDateOf } from "./billing/pricing.js";
+import { ROUND_TO_CENTS, ROUNDING_FROM } from "./billing/rates.js";
 
 import { HALLS, floorOf } from "./halls.js";
 
@@ -145,7 +146,16 @@ export function sessionCharge(s, now) {
   const price = priceIntervals(playedIntervals(s, end));
   const fullCents = price.totalCents;
   const discountCents = Math.min(fullCents, couponValue(s.discount, price, fullCents));
-  return { price, fullCents, discountCents, chargedCents: s.voidedAt ? 0 : fullCents - discountCents };
+  const exact = fullCents - discountCents;
+  // Games that finished before rounding started keep their exact amounts.
+  const chargedCents = s.voidedAt ? 0 : end >= ROUNDING_FROM ? roundCharge(exact) : exact;
+  // roundingCents: what rounding added (+) or took off (-), shown on the receipt.
+  return { price, fullCents, discountCents, roundingCents: s.voidedAt ? 0 : chargedCents - exact, chargedCents };
+}
+
+/** Round a charge to the nearest ROUND_TO_CENTS (a quarter). */
+export function roundCharge(cents, step = ROUND_TO_CENTS) {
+  return Math.round(cents / step) * step;
 }
 
 /** The rate the coupon is worked out at: the one the table was on when it stopped. */

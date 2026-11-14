@@ -37,3 +37,14 @@ export const DEFAULT_SCHEDULE = {
     day(WEEKEND_NIGHT), // Saturday
   ],
 };
+
+// Each table's final charge (after any coupon) is rounded to the nearest
+// quarter, as asked by the owners: $27.12 -> $27.00, $27.13 -> $27.25.
+// Totals add up the rounded amounts, so they match what's rung through the POS.
+// Set to 1 to charge to the exact cent.
+export const ROUND_TO_CENTS = 25;
+
+// Rounding started on Nov 14 2026 at 5:45pm. Games that finished before then
+// were rung through the POS to the exact cent, so they keep their exact
+// amounts and past totals still match the POS.
+export const ROUNDING_FROM = new Date(2026, 10, 14, 17, 45).getTime();

@@ -36,7 +36,7 @@ const csvRow = (cells) => cells.map(csvCell).join(",");
 
 export const CSV_HEADER = [
   "Night", "Day", "Table", "Customer", "Started", "Stopped", "Time played", "Minutes", "Rate",
-  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)", "Floor",
+  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)", "Floor", "Rounding ($)",
 ];
 
 /**
@@ -51,7 +51,7 @@ export function sessionsCsv(state, { night, now }) {
     .filter((s) => key == null || businessDateOf(s.start).getTime() === key)
     .sort((a, b) => a.start - b.start);
 
-  const totals = { full: 0, coupon: 0, charged: 0 };
+  const totals = { full: 0, coupon: 0, charged: 0, rounding: 0 };
   const rows = sessions.map((s) => {
     const bd = businessDateOf(s.start);
     const running = s.end == null && !s.voidedAt;
@@ -65,18 +65,19 @@ export function sessionsCsv(state, { night, now }) {
       totals.full += full;
       totals.coupon += coupon;
       totals.charged += c.chargedCents;
+      totals.rounding += c.roundingCents;
     }
     return csvRow([
       ymd(bd), WEEKDAYS[bd.getDay()], tableName(s.tableId), s.name, dateTime(s.start),
       running ? "" : dateTime(s.end), hms(c.price.ms), (c.price.ms / 60000).toFixed(1), rates,
-      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floorName(state, s.tableId),
+      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floorName(state, s.tableId), dollars(c.roundingCents),
     ]);
   });
 
   const lines = [csvRow(CSV_HEADER), ...rows];
   if (night) {
     lines.push("", csvRow(["Total (closed tables)", "", "", "", "", "", "", "", "",
-      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floorsLabel(state, sessions)]));
+      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floorsLabel(state, sessions), dollars(totals.rounding)]));
   }
   // The byte-order mark makes Excel read the file as UTF-8; Numbers ignores it.
   return "﻿" + lines.join("\r\n") + "\r\n";

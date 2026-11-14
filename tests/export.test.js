@@ -160,10 +160,11 @@ test("Coupons show in the night's totals", () => {
   eq(sum.couponCount, 2);
 });
 
-test("Older half-off records still add up (half of $0.43 is $0.22)", () => {
-  const c = M.sessionCharge({ start: at(13, 20), end: at(13, 20) + 62_000, discount: { percent: 50 } }, 0);
+test("Older half-off records still add up (half of $0.43 is $0.22, charged $0.25)", () => {
+  const c = M.sessionCharge({ start: at(20, 20), end: at(20, 20) + 62_000, discount: { percent: 50 } }, 0);
   eq(c.fullCents, 43);
-  eq(c.chargedCents, 22);
+  eq(c.discountCents, 21);
+  eq(c.chargedCents, 25);
 });
 
 test("Coupon can be removed, and can't go on a running or voided table", () => {
@@ -286,4 +287,15 @@ test("Nightly totals export includes waitlist stats", () => {
   const rows = parseCsv(nightsCsv(s, { now: at(13, 22) }));
   eq(rows[0].slice(11, 15).join("|"), "Seated from waitlist|Average wait (min)|Longest wait (min)|Left waitlist");
   eq(rows[1].slice(11, 15).join("|"), "1|18.0|18.0|1");
+});
+
+test("Export shows the rounding for each game and in the total", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(20, 20) });
+  s = M.closeTable(s, { tableId: "t1", now: at(20, 20, 1) }); // $0.42 -> $0.50
+  const rows = parseCsv(sessionsCsv(s, { night: businessDateOf(at(20, 22)), now: at(20, 22) }));
+  eq(rows[0][15], "Rounding ($)");
+  eq(rows[1][9], "0.42");
+  eq(rows[1][11], "0.50");
+  eq(rows[1][15], "0.08");
+  eq(rows[rows.length - 1][15], "0.08");
 });

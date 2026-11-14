@@ -6,7 +6,7 @@ import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from 
 import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "14 (cloud)";
+export const APP_VERSION = "15 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -472,7 +472,8 @@ function showReceipt(sessionId, { back, from } = {}) {
       <div class="lines">${receiptLines(c.price)}
         ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.minutes
           ? `${s.discount.minutes} min at ${fmtRate(couponRate(c.price))}`
-          : `${s.discount.percent}% off`})</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}</div>
+          : `${s.discount.percent}% off`})</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}
+        ${c.roundingCents ? `<div><span>Rounded to the nearest $0.25</span><span>${c.roundingCents > 0 ? "+" : "−"}${formatCents(Math.abs(c.roundingCents))}</span></div>` : ""}</div>
       ${s.voidedAt || !live ? "" : s.discount
         ? `<button class="btn" data-act="uncoupon">Remove coupon</button>`
         : `<button class="btn coupon" data-act="coupon">Apply half-hour coupon (−${formatCents(halfHourOff)})</button>`}

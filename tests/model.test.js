@@ -161,25 +161,27 @@ test("Closing a paused table charges only up to the pause", () => {
   eq(M.activeSession(s, "t1"), undefined);
 });
 
-test("Pause across 6pm: Tue 5:30-5:50 at $15 + 6:10-6:30 at $22 = $12.33", () => {
-  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(10, 17, 30) });
-  s = M.pauseTable(s, { tableId: "t1", now: at(10, 17, 50) });
-  s = M.resumeTable(s, { tableId: "t1", now: at(10, 18, 10) });
-  s = M.closeTable(s, { tableId: "t1", now: at(10, 18, 30) });
+test("Pause across 6pm: Tue 5:30-5:50 at $15 + 6:10-6:30 at $22 = $12.33, charged $12.25", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(17, 17, 30) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(17, 17, 50) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(17, 18, 10) });
+  s = M.closeTable(s, { tableId: "t1", now: at(17, 18, 30) });
   const c = M.sessionCharge(s.sessions[0], 0);
-  eq(c.chargedCents, 1233);
+  eq(c.fullCents, 1233);
+  eq(c.chargedCents, 1225, "rounded to the quarter: ");
   eq(c.price.segments.reduce((a, x) => a + x.cents, 0), 1233, "receipt lines add up: ");
 });
 
 test("Several pauses add up", () => {
-  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 20) });
-  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 10) });
-  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 20) });
-  s = M.pauseTable(s, { tableId: "t1", now: at(13, 20, 40) });
-  s = M.resumeTable(s, { tableId: "t1", now: at(13, 20, 50) });
-  s = M.closeTable(s, { tableId: "t1", now: at(13, 21) });
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(20, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(20, 20, 10) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(20, 20, 20) });
+  s = M.pauseTable(s, { tableId: "t1", now: at(20, 20, 40) });
+  s = M.resumeTable(s, { tableId: "t1", now: at(20, 20, 50) });
+  s = M.closeTable(s, { tableId: "t1", now: at(20, 21) });
   eq(M.sessionCharge(s.sessions[0], 0).price.ms, 40 * 60_000);
-  eq(M.sessionCharge(s.sessions[0], 0).chargedCents, 1667); // 40 min at $25 = 16.666
+  eq(M.sessionCharge(s.sessions[0], 0).fullCents, 1667); // 40 min at $25 = 16.666
+  eq(M.sessionCharge(s.sessions[0], 0).chargedCents, 1675, "rounded to the quarter: ");
 });
 
 test("Can't pause twice, or resume a table that isn't paused", () => {
@@ -282,4 +284,77 @@ test("Removing someone from the waitlist can be undone: back in their place, not
   eq(s.waitlist[0].addedAt, at(13, 20), "keeps original wait time: ");
   eq(s.waitHistory.length, 0, "not recorded as left: ");
   throws(() => M.waitlistRestore(s, { id: "nope" }), "unknown");
+});
+
+// --- Rounding to the nearest quarter -------------------------------------------------
+
+test("Charges round to the nearest quarter: $27.12 -> $27.00, $27.13 -> $27.25", () => {
+  eq(M.roundCharge(2712), 2700);
+  eq(M.roundCharge(2713), 2725);
+  eq(M.roundCharge(2737), 2725);
+  eq(M.roundCharge(2738), 2750);
+  eq(M.roundCharge(2750), 2750);
+  eq(M.roundCharge(0), 0);
+  eq(M.roundCharge(12), 0);
+  eq(M.roundCharge(13), 25);
+});
+
+test("A real game: 17m 30s on a weeknight is $6.42 by time, charged $6.50", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(17, 20) });
+  s = M.closeTable(s, { tableId: "t1", now: at(17, 20, 17) + 30_000 });
+  const c = M.sessionCharge(s.sessions[0], 0);
+  eq(c.fullCents, 642);
+  eq(c.chargedCents, 650);
+  eq(c.roundingCents, 8);
+});
+
+test("Rounding happens after the coupon, on what the customer pays", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(20, 20), id: "g" });
+  s = M.closeTable(s, { tableId: "t1", now: at(20, 21, 17) }); // 77 min @ $25 = $32.08
+  s = M.applyDiscount(s, { sessionId: "g", now: at(20, 21, 18) }); // - $12.50 = $19.58
+  const c = M.sessionCharge(s.sessions[0], 0);
+  eq(c.fullCents, 3208);
+  eq(c.discountCents, 1250);
+  eq(c.chargedCents, 1950);
+  eq(c.roundingCents, -8);
+});
+
+test("Nightly totals add up the rounded charges (what the POS rang up)", () => {
+  let s = M.initialState();
+  s = M.openTable(s, { tableId: "t1", now: at(20, 20) });
+  s = M.closeTable(s, { tableId: "t1", now: at(20, 20, 1) }); // $0.42 -> $0.50
+  s = M.openTable(s, { tableId: "t2", now: at(20, 20) });
+  s = M.closeTable(s, { tableId: "t2", now: at(20, 20, 17) }); // $7.08 -> $7.00
+  const sum = M.daySummary(s, businessDateOf(at(20, 22)), at(20, 22));
+  eq(sum.closedTotalCents, 750);
+  eq(sum.fullTotalCents, 750, "before coupons is the exact time charge: 42 + 708: ");
+});
+
+test("Voided games stay at $0, no rounding", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(20, 20), id: "v" });
+  s = M.voidSession(s, { sessionId: "v", now: at(20, 20, 7) });
+  const c = M.sessionCharge(s.sessions[0], 0);
+  eq(c.chargedCents, 0);
+  eq(c.roundingCents, 0);
+});
+
+test("Games that finished before rounding started keep their exact amounts", () => {
+  // Nov 14 2026, 5:45pm is when rounding started.
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: new Date(2026, 10, 14, 16, 0).getTime(), id: "early" });
+  s = M.closeTable(s, { tableId: "t1", now: new Date(2026, 10, 14, 16, 17).getTime() }); // 17 min @ $15 = $4.25 exactly
+  s = M.openTable(s, { tableId: "t2", now: new Date(2026, 10, 14, 16, 0).getTime(), id: "before" });
+  s = M.closeTable(s, { tableId: "t2", now: new Date(2026, 10, 14, 17, 18).getTime() }); // 78 min @ $15 = $19.50
+  s = M.openTable(s, { tableId: "t3", now: new Date(2026, 10, 14, 16, 1).getTime(), id: "x" });
+  s = M.closeTable(s, { tableId: "t3", now: new Date(2026, 10, 14, 16, 2).getTime() }); // 1 min @ $15 = $0.25 exactly
+  s = M.openTable(s, { tableId: "t4", now: new Date(2026, 10, 14, 17, 0).getTime(), id: "y" });
+  s = M.closeTable(s, { tableId: "t4", now: new Date(2026, 10, 14, 17, 1).getTime() }); // before 5:45: $0.25 exact
+  const byId = (id) => M.sessionCharge(s.sessions.find((x) => x.id === id), 0).chargedCents;
+  eq(byId("y"), 25);
+  let t = M.openTable(M.initialState(), { tableId: "t1", now: new Date(2026, 10, 14, 17, 0).getTime(), id: "a" });
+  t = M.closeTable(t, { tableId: "t1", now: new Date(2026, 10, 14, 17, 2).getTime() + 30_000 }); // 2.5 min @ $15 = $0.63, before 5:45
+  eq(M.sessionCharge(t.sessions[0], 0).chargedCents, 63, "finished before: exact: ");
+  let u = M.openTable(M.initialState(), { tableId: "t1", now: new Date(2026, 10, 14, 17, 44).getTime(), id: "b" });
+  u = M.closeTable(u, { tableId: "t1", now: new Date(2026, 10, 14, 17, 46).getTime() + 30_000 }); // 2.5 min, finished after
+  eq(M.sessionCharge(u.sessions[0], 0).fullCents, 63);
+  eq(M.sessionCharge(u.sessions[0], 0).chargedCents, 75, "finished after: rounded: ");
 });
