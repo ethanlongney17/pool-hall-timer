@@ -3,6 +3,9 @@ import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedM
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
+// Shown in the status bar so staff can tell which version the iPad is running.
+export const APP_VERSION = "6 (pause)";
+
 const store = createLocalStore();
 const $ = (id) => document.getElementById(id);
 const sheet = $("sheet");
@@ -125,7 +128,8 @@ function renderStatus(state) {
     <span>Tables running: <b>${running.length}</b> of ${state.tables.length}${pausedCount ? ` (${pausedCount} paused)` : ""}</span>
     <span>Waiting: <b>${state.waitlist.length}</b></span>
     <span>Tonight so far: <b data-live="charge" data-base="${sum.closedTotalCents}" data-sessions="${openIds}"></b></span>
-    ${store.kind === "local" ? `<span class="warn">Saved on this device only</span>` : ""}`;
+    ${store.kind === "local" ? `<span class="warn">Saved on this device only</span>` : ""}
+    <span class="version">Version ${APP_VERSION}</span>`;
 }
 
 function renderAll() {
@@ -510,6 +514,31 @@ setInterval(() => {
   tick();
 }, 60_000);
 
+// ---------- Updates ----------
+// Check for a new version when the app opens and whenever it comes back to the
+// screen. When one arrives, reload to use it, but never in the middle of a
+// pop-up: wait until it's closed. Saved data isn't affected by a reload.
+
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Offline support unavailable", e));
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker
+    .register("sw.js", { updateViaCache: "none" })
+    .then((reg) => {
+      reg.update().catch(() => {});
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    })
+    .catch((e) => console.warn("Offline support unavailable", e));
+
+  let reloading = false;
+  const reloadForUpdate = () => {
+    if (reloading) return;
+    if (sheet.open) return sheet.addEventListener("close", reloadForUpdate, { once: true });
+    reloading = true;
+    location.reload();
+  };
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) reloadForUpdate(); // first install needs no reload
+  });
 }
