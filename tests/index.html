@@ -17,7 +17,8 @@
 <script type="module">
   import { tests as pricing } from "./pricing.test.js";
   import { tests as model } from "./model.test.js";
-  const tests = [...pricing, ...model];
+  import { tests as exporting } from "./export.test.js";
+  const tests = [...pricing, ...model, ...exporting];
   const ul = document.getElementById("results");
   const results = [];
   for (const t of tests) {

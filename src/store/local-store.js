@@ -44,6 +44,16 @@ export function createLocalStore() {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
+    /** Replace everything (used by Restore from backup). */
+    replaceAll(next) {
+      state = next;
+      try {
+        localStorage.setItem(KEY, JSON.stringify(state));
+      } catch (e) {
+        throw new Error("Couldn't save the restored data on this device.");
+      }
+      emit();
+    },
     dispatch(name, args) {
       const action = actions[name];
       if (!action) throw new Error(`Unknown action ${name}`);

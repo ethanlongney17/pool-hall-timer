@@ -1,6 +1,7 @@
 import { createLocalStore } from "./store/local-store.js";
 import { activeSession, daySummary } from "./model.js";
 import { priceSession, rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
+import { sessionsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 const store = createLocalStore();
 const $ = (id) => document.getElementById(id);
@@ -338,14 +339,71 @@ function showToday(dayOffset = 0) {
           ${sum.closed.length + sum.voided.length ? "" : `<tr><td colspan="5" class="empty">Nothing closed yet.</td></tr>`}</tbody></table></div>
         <div class="row"><button class="btn" data-act="prev">◀ Previous day</button>
           <button class="btn" data-act="next" ${dayOffset >= 0 ? "disabled" : ""}>Next day ▶</button></div>
+        <div class="export">
+          <div class="export-title">Save a copy for Numbers or Files (works without Wi-Fi)</div>
+          <div class="row">
+            <button class="btn" data-act="csvNight">Export this night</button>
+            <button class="btn" data-act="csvAll">Export all nights</button>
+          </div>
+          <div class="row">
+            <button class="btn" data-act="backup">Save full backup</button>
+            <button class="btn" data-act="restore">Restore from backup…</button>
+          </div>
+        </div>
       </div>`;
     },
     handlers: {
       prev: () => showToday(dayOffset - 1),
       next: () => dayOffset < 0 && showToday(dayOffset + 1),
+      csvNight: () => {
+        const night = businessDateOf(Date.now());
+        night.setDate(night.getDate() + dayOffset);
+        const csv = sessionsCsv(store.get(), { night, now: Date.now() });
+        return saveAndReport(`pool-tables-${ymd(night)}.csv`, csv, "text/csv");
+      },
+      csvAll: () => {
+        const csv = sessionsCsv(store.get(), { now: Date.now() });
+        return saveAndReport(`pool-tables-all-nights-to-${ymd(new Date())}.csv`, csv, "text/csv");
+      },
+      backup: () => {
+        const now = new Date();
+        const stamp = `${ymd(now)}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+        return saveAndReport(`pool-tables-backup-${stamp}.json`, backupJson(store.get(), now.getTime()), "application/json");
+      },
+      restore: () => $("restoreInput").click(),
     },
   });
 }
+
+async function saveAndReport(filename, text, type) {
+  try {
+    const how = await offerFile(filename, text, type);
+    if (how === "downloaded") toast(`Saved ${filename}`);
+  } catch (e) {
+    toast(`Couldn't save the file: ${e.message}`, true);
+  }
+}
+
+$("restoreInput").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const { exportedAt, state } = parseBackup(await file.text());
+    const when = exportedAt ? new Date(exportedAt).toLocaleString() : "an unknown date";
+    const ok = confirm(
+      `Replace everything on this iPad with the backup from ${when}?\n\n` +
+        `It has ${state.sessions.length} table sessions and ${state.waitlist.length} waitlist names. ` +
+        `Anything recorded here since that backup will be lost.`,
+    );
+    if (!ok) return;
+    store.replaceAll(state);
+    closeSheet();
+    toast("Backup restored");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 
 // ---------- Wiring ----------
 
