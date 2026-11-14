@@ -6,7 +6,7 @@
 //
 // Several tabs/windows on the same device stay in sync via the storage event.
 
-import { actions, initialState } from "../model.js";
+import { actions, initialState, withHallTableNames } from "../model.js";
 
 
 function load(KEY, hall) {
@@ -14,7 +14,7 @@ function load(KEY, hall) {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.version === 1) return parsed;
+      if (parsed && parsed.version === 1) return withHallTableNames(parsed, hall);
     }
   } catch (e) {
     console.error("Could not read saved data", e);

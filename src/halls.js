@@ -15,7 +15,8 @@ export const HALLS = {
   upstairs: {
     id: "upstairs",
     title: "Upstairs Tables",
-    tables: Array.from({ length: 5 }, (_, i) => ({ id: `u${i + 1}`, name: `Upstairs ${i + 1}` })),
+    // Numbered on from downstairs (1-11), so every table in the building has its own number.
+    tables: Array.from({ length: 5 }, (_, i) => ({ id: `u${i + 1}`, name: `Table ${i + 12}` })),
     storageKey: "poolhall.upstairs.v1",
     filePrefix: "pool-tables-upstairs",
   },

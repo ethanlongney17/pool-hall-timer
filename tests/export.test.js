@@ -223,8 +223,8 @@ import { HALLS } from "../src/halls.js";
 test("Upstairs starts with 5 tables of its own", () => {
   const s = M.initialState(HALLS.upstairs);
   eq(s.tables.length, 5);
-  eq(s.tables[0].name, "Upstairs 1");
-  eq(s.tables[4].name, "Upstairs 5");
+  eq(s.tables[0].name, "Table 12");
+  eq(s.tables[4].name, "Table 16");
   eq(s.hall, "upstairs");
   eq(HALLS.upstairs.storageKey === HALLS.downstairs.storageKey, false, "separate saved data: ");
 });
@@ -233,7 +233,7 @@ test("Upstairs tables run and bill the same way", () => {
   let s = M.openTable(M.initialState(HALLS.upstairs), { tableId: "u3", now: at(13, 20) });
   s = M.closeTable(s, { tableId: "u3", now: at(13, 21) });
   const rows = parseCsv(sessionsCsv(s, { night: businessDateOf(at(13, 22)), now: at(13, 22) }));
-  eq(rows[1][2], "Upstairs 3");
+  eq(rows[1][2], "Table 14");
   eq(rows[1][11], "25.00");
   throws(() => M.openTable(s, { tableId: "t1", now: at(13, 22) }), "downstairs table upstairs");
 });
@@ -266,4 +266,14 @@ test("Every export row says which floor it's from, so floors can share one sheet
   eq(nights[1][10], "Upstairs");
   const down = parseCsv(sessionsCsv(sampleNight(), { now: at(14, 16) }));
   eq(down[1][14], "Downstairs");
+});
+
+test("Upstairs data saved under the old names picks up Table 12-16, keeping its games", () => {
+  let old = M.initialState(HALLS.upstairs);
+  old = { ...old, tables: old.tables.map((t, i) => ({ ...t, name: `Upstairs ${i + 1}` })) };
+  old = M.openTable(old, { tableId: "u2", now: at(13, 20), id: "g" });
+  const s = M.withHallTableNames(old, HALLS.upstairs);
+  eq(s.tables.map((t) => t.name).join(","), "Table 12,Table 13,Table 14,Table 15,Table 16");
+  eq(M.activeSession(s, "u2").id, "g", "running game stays on its table: ");
+  eq(M.withHallTableNames(s, HALLS.upstairs), s, "no change needed: ");
 });

@@ -12,6 +12,17 @@ import { priceIntervals, businessDateOf } from "./billing/pricing.js";
 
 import { HALLS } from "./halls.js";
 
+/**
+ * Saved data keeps the table names from when it was first created. When a
+ * name changes in halls.js, apply it here (matched by table id, so past
+ * games stay attached to the right table).
+ */
+export function withHallTableNames(state, hall) {
+  const names = new Map(hall.tables.map((t) => [t.id, t.name]));
+  if (!state.tables.some((t) => names.has(t.id) && names.get(t.id) !== t.name)) return state;
+  return { ...state, tables: state.tables.map((t) => (names.has(t.id) ? { ...t, name: names.get(t.id) } : t)) };
+}
+
 /** A fresh, empty floor. Defaults to downstairs (11 tables). */
 export function initialState(hall = HALLS.downstairs) {
   return {
