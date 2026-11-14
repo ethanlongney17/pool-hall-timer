@@ -10,7 +10,7 @@
 
 import { priceIntervals, businessDateOf } from "./billing/pricing.js";
 
-import { HALLS } from "./halls.js";
+import { HALLS, floorOf } from "./halls.js";
 
 /**
  * Saved data keeps the table names from when it was first created. When a
@@ -44,6 +44,62 @@ export function newId() {
 
 export function activeSession(state, tableId) {
   return state.sessions.find((s) => s.tableId === tableId && s.end == null && !s.voidedAt);
+}
+
+// ---------- Cleaning and "table ready" (upstairs) ----------
+// Upstairs tables are cleaned by the bartender after a game. Until they tap
+// "Table ready", the table shows as being cleaned and isn't offered for
+// seating. Marking it ready tells downstairs (a flashing tile and a banner)
+// until someone there taps "Got it" or the table is used. Stored on the game
+// that just finished, so it syncs like everything else.
+
+export const CLEANING_FLOORS = ["upstairs"];
+
+/** The most recent finished (not voided) game on a table. */
+function lastFinished(state, tableId) {
+  let last = null;
+  for (const s of state.sessions) {
+    if (s.tableId !== tableId || s.end == null || s.voidedAt) continue;
+    if (!last || s.end > last.end) last = s;
+  }
+  return last;
+}
+const sameNight = (a, b) => businessDateOf(a).getTime() === businessDateOf(b).getTime();
+
+/** "running", "cleaning" or "free". Only tonight's games leave a table to clean. */
+export function tableStatus(state, tableId, now) {
+  if (activeSession(state, tableId)) return "running";
+  if (!CLEANING_FLOORS.includes(floorOf(state, tableId))) return "free";
+  const last = lastFinished(state, tableId);
+  if (last && last.readyAt == null && sameNight(last.end, now)) return "cleaning";
+  return "free";
+}
+
+/** Tables marked ready that downstairs hasn't acknowledged yet, oldest first. */
+export function readyAlerts(state, now) {
+  const out = [];
+  for (const t of state.tables) {
+    if (tableStatus(state, t.id, now) !== "free") continue;
+    const last = lastFinished(state, t.id);
+    if (last?.readyAt != null && last.readyAckAt == null && sameNight(last.readyAt, now)) {
+      out.push({ tableId: t.id, sessionId: last.id, readyAt: last.readyAt });
+    }
+  }
+  return out.sort((a, b) => a.readyAt - b.readyAt);
+}
+
+export function markTableReady(state, { tableId, now }) {
+  if (activeSession(state, tableId)) throw new Error("That table is in use");
+  const last = lastFinished(state, tableId);
+  if (!last || last.readyAt != null) return state;
+  return replaceSession(state, withLog({ ...last, readyAt: now }, { at: now, what: "table ready" }));
+}
+
+/** Downstairs saw the "ready" notice. */
+export function ackTableReady(state, { tableId, now }) {
+  const last = lastFinished(state, tableId);
+  if (!last || last.readyAt == null || last.readyAckAt != null) return state;
+  return replaceSession(state, { ...last, readyAckAt: now });
 }
 
 function tableName(state, tableId) {
@@ -328,11 +384,16 @@ export function waitEstimates(state, now) {
   let free = 0;
   const remaining = [];
   for (const t of state.tables) {
-    const s = activeSession(state, t.id);
-    if (!s) {
+    const status = tableStatus(state, t.id, now);
+    if (status === "free") {
       free++;
       continue;
     }
+    if (status === "cleaning") {
+      remaining.push(MIN_REMAINING_MS); // ready in a few minutes
+      continue;
+    }
+    const s = activeSession(state, t.id);
     const played = now - s.start - pausedMs(s, now);
     remaining.push(Math.max(typical - played, MIN_REMAINING_MS));
   }
@@ -371,6 +432,8 @@ export const actions = {
   waitlistRestore,
   seatFromWaitlist,
   applyDiscount,
+  markTableReady,
+  ackTableReady,
   pauseTable,
   resumeTable,
   removeDiscount,

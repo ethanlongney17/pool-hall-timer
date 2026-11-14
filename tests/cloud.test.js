@@ -137,3 +137,67 @@ test("Older nights fetched later merge in without duplicates", () => {
   eq(merged.sessions.map((s) => s.id).join(), "b,a");
   eq(merged.waitHistory.length, 1);
 });
+
+// --- Upstairs cleaning and "table ready" ---------------------------------------------
+
+function upstairsGame() {
+  let s = M.openTable(building(), { tableId: "u2", now: at(13, 20), id: "g" });
+  return M.closeTable(s, { tableId: "u2", now: at(13, 21) });
+}
+
+test("A closed upstairs table is 'being cleaned' until marked ready", () => {
+  const s = upstairsGame();
+  eq(M.tableStatus(s, "u2", at(13, 21, 5)), "cleaning");
+  const ready = M.markTableReady(s, { tableId: "u2", now: at(13, 21, 8) });
+  eq(M.tableStatus(ready, "u2", at(13, 21, 9)), "free");
+});
+
+test("Downstairs tables never wait for cleaning", () => {
+  let s = M.openTable(building(), { tableId: "t4", now: at(13, 20) });
+  s = M.closeTable(s, { tableId: "t4", now: at(13, 21) });
+  eq(M.tableStatus(s, "t4", at(13, 21, 1)), "free");
+  eq(M.readyAlerts(s, at(13, 21, 1)).length, 0);
+});
+
+test("Marking ready alerts downstairs until 'Got it'", () => {
+  let s = M.markTableReady(upstairsGame(), { tableId: "u2", now: at(13, 21, 8) });
+  const alerts = M.readyAlerts(s, at(13, 21, 9));
+  eq(alerts.length, 1);
+  eq(alerts[0].tableId, "u2");
+  s = M.ackTableReady(s, { tableId: "u2", now: at(13, 21, 10) });
+  eq(M.readyAlerts(s, at(13, 21, 11)).length, 0);
+  eq(M.tableStatus(s, "u2", at(13, 21, 11)), "free");
+});
+
+test("Seating someone at a ready table clears its alert", () => {
+  let s = M.markTableReady(upstairsGame(), { tableId: "u2", now: at(13, 21, 8) });
+  s = M.waitlistAdd(s, { name: "Sam", now: at(13, 21), id: "w1" });
+  s = M.seatFromWaitlist(s, { waitId: "w1", tableId: "u2", now: at(13, 21, 9) });
+  eq(M.readyAlerts(s, at(13, 21, 10)).length, 0);
+  eq(M.tableStatus(s, "u2", at(13, 21, 10)), "running");
+});
+
+test("A table left uncleaned last night is free the next day", () => {
+  eq(M.tableStatus(upstairsGame(), "u2", at(14, 14)), "free");
+});
+
+test("Voided upstairs games don't need cleaning", () => {
+  let s = M.openTable(building(), { tableId: "u3", now: at(13, 20), id: "v" });
+  s = M.voidSession(s, { sessionId: "v", now: at(13, 20, 1) });
+  eq(M.tableStatus(s, "u3", at(13, 20, 2)), "free");
+});
+
+test("A table being cleaned counts as free in about 5 minutes for wait estimates", () => {
+  let s = upstairsGame();
+  for (const t of ALL_TABLES.filter((t) => t.id !== "u2")) s = M.openTable(s, { tableId: t.id, now: at(13, 21) });
+  s = M.waitlistAdd(s, { name: "Sam", now: at(13, 21) });
+  eq(M.waitEstimates(s, at(13, 21, 5))[0], 5 * MINUTE);
+});
+
+test("Ready and acknowledged are synced like any other change", () => {
+  const s0 = upstairsGame();
+  const s1 = M.markTableReady(s0, { tableId: "u2", now: at(13, 21, 8) });
+  const ops = diffState(s0, s1);
+  eq(ops.length, 1);
+  eq(ops[0].col + " " + ops[0].id + " " + ops[0].data.readyAt, `sessions g ${at(13, 21, 8)}`);
+});

@@ -1,12 +1,12 @@
 import { createCloudStore } from "./store/cloud-store.js";
 import { currentHall, floorsShown, floorsInPlay, onlyFloors, floorOf, FLOORS } from "./halls.js";
-import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats } from "./model.js";
+import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "12 (cloud)";
+export const APP_VERSION = "13 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -145,19 +145,80 @@ function renderTables(state) {
   const closedNote = hall.id === "upstairs" && !store.get().upstairsOpen
     ? `<div class="floor-note">Upstairs is marked closed, so downstairs can't see these tables or seat people here.
         <button class="btn small primary" data-upstairs="open">Open upstairs</button></div>` : "";
-  $("tables").innerHTML = closedNote + floors.map((f) => {
+  const now = Date.now();
+  const statuses = state.tables.map((t) => tableStatus(state, t.id, now));
+  const freeCount = statuses.filter((x) => x === "free").length;
+  const cleaningCount = statuses.filter((x) => x === "cleaning").length;
+  const waiting = store.get().waitlist.length;
+  const strip = `<div class="summary-strip">
+    <span class="${freeCount ? "good" : ""}"><b>${freeCount}</b> table${freeCount === 1 ? "" : "s"} free</span>
+    ${cleaningCount ? `<span><b>${cleaningCount}</b> being cleaned</span>` : ""}
+    <span class="${waiting ? "warn" : ""}"><b>${waiting}</b> on the waitlist</span></div>`;
+  $("tables").innerHTML = strip + readyBanner() + closedNote + floors.map((f) => {
     const heading = floors.length > 1 ? `<h3 class="floor-head">${FLOORS[f].name}</h3>` : "";
     return heading + state.tables.filter((t) => floorOf(state, t.id) === f).map(tableCard).join("");
   }).join("");
 }
+
+// Downstairs gets a flashing tile, a banner and a chime when the upstairs
+// bartender marks a table ready; it stays until someone taps "Got it" or
+// the table is used.
+const alertsFor = () => (hall.id === "downstairs" ? readyAlerts(shown(), Date.now()) : []);
+
+function readyBanner() {
+  const alerts = alertsFor();
+  if (!alerts.length) return "";
+  const next = store.get().waitlist[0];
+  return alerts.map((a) => `<div class="ready-banner">
+      <span>✓ <b>${esc(tableName(a.tableId))}</b> is ready upstairs</span>
+      ${next ? `<button class="btn small primary" data-ready-act="seat" data-table-id="${a.tableId}">Seat ${esc(next.name)}</button>` : ""}
+      <button class="btn small" data-ready-act="ack" data-table-id="${a.tableId}">Got it</button>
+    </div>`).join("");
+}
+
+let heardAlerts = null;
+function chimeForNewAlerts() {
+  const ids = new Set(alertsFor().map((a) => a.sessionId));
+  const fresh = heardAlerts && [...ids].some((id) => !heardAlerts.has(id));
+  heardAlerts = ids;
+  if (fresh) chime();
+}
+// A short two-note chime. iPads only allow sound after someone has tapped
+// the screen once since the app opened, which happens on any busy night.
+let audioCtx;
+function chime() {
+  try {
+    audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const t = audioCtx.currentTime;
+    [880, 1320].forEach((freq, i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t + i * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.3, t + i * 0.18 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.4);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t + i * 0.18);
+      o.stop(t + i * 0.18 + 0.45);
+    });
+  } catch {}
+}
+document.addEventListener("pointerdown", () => audioCtx?.resume?.(), { passive: true });
 
 function tableCard(t) {
   const state = store.get();
   {
       const s = activeSession(state, t.id);
       if (!s) {
-        return `<button class="table-card free" data-table="${t.id}">
-          <span class="t-name">${esc(t.name)}</span><span class="t-state">Available</span></button>`;
+        const status = tableStatus(state, t.id, Date.now());
+        if (status === "cleaning") {
+          return `<button class="table-card cleaning" data-table="${t.id}">
+            <span class="t-name">${esc(t.name)}</span>
+            <span class="t-state">${hall.id === "upstairs" ? "Being cleaned · tap when ready" : "Being cleaned"}</span></button>`;
+        }
+        const alerting = alertsFor().some((a) => a.tableId === t.id);
+        return `<button class="table-card free${alerting ? " ready-flash" : ""}" data-table="${t.id}">
+          <span class="t-name">${esc(t.name)}</span><span class="t-state">${alerting ? "Ready ✓" : "Available"}</span></button>`;
       }
       const paused = isPaused(s);
       return `<button class="table-card busy${paused ? " paused" : ""}" data-table="${t.id}">
@@ -174,7 +235,7 @@ function fmtEstimate(ms, style) {
   if (ms <= 0) return style === "new" ? "A table is free now" : "table free now";
   const lo = Math.max(5, Math.ceil(ms / 300_000) * 5);
   const text = lo >= 60 ? `${Math.floor(lo / 60)}h ${String(lo % 60).padStart(2, "0")}m` : `${lo}–${lo + 5} min`;
-  return style === "new" ? `Wait for a new party: about ${text}` : `Est. wait ${text}`;
+  return style === "new" ? `Estimated wait: about ${text}` : `Est. wait ${text}`;
 }
 
 let newWaitEl;
@@ -184,8 +245,10 @@ function renderWaitlist(state) {
     newWaitEl.className = "wait-new";
     $("waitForm").after(newWaitEl);
   }
-  newWaitEl.innerHTML = `<span data-live="estimate" data-position="${state.waitlist.length}" data-style="new"></span>`;
-  $("waitCount").textContent = state.waitlist.length ? `(${state.waitlist.length})` : "";
+  const n = state.waitlist.length;
+  newWaitEl.innerHTML = `${n ? `<div class="wait-pos">A new party would be <b>#${n + 1}</b> on the list</div>` : ""}
+    <div data-live="estimate" data-position="${n}" data-style="new"></div>`;
+  $("waitCount").innerHTML = n ? `<span class="wait-count-big">${n}</span>` : "";
   $("waitList").innerHTML = state.waitlist.length
     ? state.waitlist
         .map(
@@ -225,6 +288,7 @@ function renderStatus() {
 }
 
 function renderAll() {
+  chimeForNewAlerts();
   const state = shown();
   renderTables(state);
   renderWaitlist(state);
@@ -267,7 +331,29 @@ const head = (title, sub = "") => `
 
 function freeTables() {
   const state = shown();
-  return state.tables.filter((t) => !activeSession(state, t.id));
+  const now = Date.now();
+  return state.tables.filter((t) => tableStatus(state, t.id, now) === "free");
+}
+
+function showCleaning(tableId) {
+  const upstairsApp = hall.id === "upstairs";
+  showSheet({
+    render: () => `<div class="sheet">
+      ${head(`${esc(tableName(tableId))}: being cleaned`, upstairsApp
+        ? "Tap Table ready once it's cleaned. Downstairs gets a notice so they can send the next party up."
+        : "The upstairs bartender will mark it ready once it's cleaned.")}
+      <button class="btn primary big" data-act="ready">Table ready</button>
+      <button class="btn" data-act="start">Start a game here anyway</button>
+    </div>`,
+    handlers: {
+      ready: () => {
+        act("markTableReady", { tableId });
+        closeSheet();
+        toast(`${tableName(tableId)} is ready${upstairsApp ? ". Downstairs has been told." : ""}`);
+      },
+      start: () => showOpen(tableId),
+    },
+  });
 }
 
 function showOpen(tableId) {
@@ -635,7 +721,13 @@ $("tables").addEventListener("click", (e) => {
   const card = e.target.closest("[data-table]");
   if (!card) return;
   const id = card.dataset.table;
-  run(() => (activeSession(store.get(), id) ? showRunning(id) : showOpen(id)));
+  run(() => {
+    const status = tableStatus(store.get(), id, Date.now());
+    if (status === "running") return showRunning(id);
+    if (status === "cleaning") return showCleaning(id);
+    if (alertsFor().some((a) => a.tableId === id)) act("ackTableReady", { tableId: id });
+    showOpen(id);
+  });
 });
 
 $("waitForm").addEventListener("submit", (e) => {
@@ -687,6 +779,18 @@ function setUpstairs(open) {
 upstairsBtn.addEventListener("click", () => run(() => setUpstairs(!store.get().upstairsOpen)));
 $("tables").addEventListener("click", (e) => {
   if (e.target.closest("[data-upstairs=open]")) run(() => setUpstairs(true));
+  const r = e.target.closest("[data-ready-act]");
+  if (!r) return;
+  const tableId = r.dataset.tableId;
+  run(() => {
+    act("ackTableReady", { tableId });
+    if (r.dataset.readyAct === "seat") {
+      const next = store.get().waitlist[0];
+      if (!next) return;
+      act("seatFromWaitlist", { waitId: next.id, tableId });
+      toast(`${next.name} seated at ${tableName(tableId)}`);
+    }
+  });
 });
 
 // ---------- Sign-in ----------
