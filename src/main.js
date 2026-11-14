@@ -1,5 +1,5 @@
 import { createLocalStore } from "./store/local-store.js";
-import { activeSession, daySummary, sessionCharge } from "./model.js";
+import { activeSession, daySummary, sessionCharge, couponRate } from "./model.js";
 import { priceSession, rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
@@ -240,6 +240,7 @@ function showReceipt(sessionId, { back } = {}) {
   const s = store.get().sessions.find((x) => x.id === sessionId);
   if (!s || s.end == null) return closeSheet();
   const c = sessionCharge(s, Date.now());
+  const halfHourOff = Math.min(c.fullCents, Math.round(couponRate(c.price) / 2));
   const done = back ? `<button class="btn primary big" data-act="back">Back to totals</button>`
     : `<button class="btn primary big" data-act="close">Done</button>`;
   showSheet({
@@ -251,18 +252,20 @@ function showReceipt(sessionId, { back } = {}) {
       <dl class="kv"><dt>Time played</dt><dd>${formatDuration(c.price.ms)}</dd>
         <dt>Started</dt><dd>${fmtTime(s.start)}</dd><dt>Stopped</dt><dd>${fmtTime(s.end)}</dd></dl>
       <div class="lines">${receiptLines(c.price)}
-        ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.percent}% off)</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}</div>
+        ${s.discount ? `<div><span>${esc(s.discount.label)} (${s.discount.minutes
+          ? `${s.discount.minutes} min at ${fmtRate(couponRate(c.price))}`
+          : `${s.discount.percent}% off`})</span><span>−${formatCents(c.discountCents)}</span></div>` : ""}</div>
       ${s.voidedAt ? "" : s.discount
         ? `<button class="btn" data-act="uncoupon">Remove coupon</button>`
-        : `<button class="btn coupon" data-act="coupon">Apply half-off coupon</button>`}
+        : `<button class="btn coupon" data-act="coupon">Apply half-hour coupon (−${formatCents(halfHourOff)})</button>`}
       ${done}
       ${back || s.voidedAt ? "" : `<button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>`}
     </div>`,
     handlers: {
       coupon: () => {
-        act("applyDiscount", { sessionId, percent: 50, label: "Half-off coupon" });
+        act("applyDiscount", { sessionId, minutes: 30, label: "Half-hour coupon" });
         showReceipt(sessionId, { back });
-        toast("Half-off coupon applied");
+        toast("Half-hour coupon applied");
       },
       uncoupon: () => {
         act("removeDiscount", { sessionId });
@@ -350,13 +353,13 @@ function showToday(dayOffset = 0) {
       const openStarts = sum.open.map((s) => s.start).join(",");
       const row = (s, cls = "") => `<tr class="tap ${cls}" data-act="receipt" data-id="${s.id}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
         <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.end - s.start)}</td>
-        <td class="amt">${cls ? "void" : `${s.discount ? `<span class="half">½ off</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
+        <td class="amt">${cls ? "void" : `${s.discount ? `<span class="half">coupon</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
       return `<div class="sheet">
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
         <div class="big-num">${formatCents(sum.closedTotalCents)}</div>
         <div class="sub" style="margin-top:-4px">collected from ${sum.closed.length} closed table${sum.closed.length === 1 ? "" : "s"} · ${formatDuration(sum.totalMs)} played</div>
         ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
-          <dt>Half-off coupons (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
+          <dt>Coupons used (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
         ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-starts="${openStarts}"></dd>
           <dt>Total if all closed now</dt><dd data-live="charge" data-base="${sum.closedTotalCents}" data-starts="${openStarts}"></dd></dl>` : ""}
         <div class="report"><table><thead><tr><th>Table</th><th>Name</th><th>Time</th><th>Played</th><th class="amt">Charged</th></tr></thead>

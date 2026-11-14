@@ -48,10 +48,23 @@ export function sessionCharge(s, now) {
   const end = s.end ?? Math.max(now, s.start);
   const price = priceSession(s.start, end);
   const fullCents = price.totalCents;
-  const pct = s.discount?.percent ?? 0;
-  const afterCoupon = Math.round((fullCents * (100 - pct)) / 100);
-  const discountCents = fullCents - afterCoupon;
-  return { price, fullCents, discountCents, chargedCents: s.voidedAt ? 0 : afterCoupon };
+  const discountCents = Math.min(fullCents, couponValue(s.discount, price, fullCents));
+  return { price, fullCents, discountCents, chargedCents: s.voidedAt ? 0 : fullCents - discountCents };
+}
+
+/** The rate the coupon is worked out at: the one the table was on when it stopped. */
+export function couponRate(price) {
+  return price.segments.length ? price.segments[price.segments.length - 1].centsPerHour : 0;
+}
+
+function couponValue(discount, price, fullCents) {
+  if (!discount) return 0;
+  // Time coupon (e.g. half an hour free): that many minutes at the closing rate.
+  // $25/hr table, 30-minute coupon -> $12.50 off. Never more than the bill.
+  if (discount.minutes) return Math.round((couponRate(price) * discount.minutes) / 60);
+  // Older percent-off coupons, kept so earlier records still add up.
+  if (discount.percent) return fullCents - Math.round((fullCents * (100 - discount.percent)) / 100);
+  return 0;
 }
 
 /** Totals for one business day (the 6am-to-6am "night"), for matching the till. */
@@ -117,15 +130,15 @@ export function reopenSession(state, { sessionId, now }) {
   return replaceSession(state, withLog({ ...rest, end: null }, { at: now, what: "reopened" }));
 }
 
-/** Coupon (e.g. half off) on a closed table. Replaces any coupon already on it. */
-export function applyDiscount(state, { sessionId, percent = 50, label = "Half-off coupon", now }) {
+/** Coupon on a closed table: half an hour free by default. Replaces any coupon already on it. */
+export function applyDiscount(state, { sessionId, minutes = 30, label = "Half-hour coupon", now }) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s || s.end == null) throw new Error("Close the table before applying a coupon");
   if (s.voidedAt) throw new Error("This table was voided; there's nothing to discount");
-  if (!(percent > 0 && percent <= 100)) throw new Error("Coupon must be between 1% and 100% off");
+  if (!(minutes > 0 && minutes <= 600)) throw new Error("Coupon must be for some minutes of play");
   return replaceSession(
     state,
-    withLog({ ...s, discount: { percent, label, at: now } }, { at: now, what: `coupon: ${label}` }),
+    withLog({ ...s, discount: { minutes, label, at: now } }, { at: now, what: `coupon: ${label}` }),
   );
 }
 

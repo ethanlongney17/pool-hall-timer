@@ -110,45 +110,65 @@ test("Restore refuses files that aren't backups", () => {
   throws(() => parseBackup(JSON.stringify({ app: "pool-tables", state: { version: 1, tables: [], sessions: [{}], waitlist: [] } })), "damaged");
 });
 
-// --- Half-off coupons -----------------------------------------------------------
+// --- Half-hour coupons -------------------------------------------------------------
 import { nightsCsv } from "../src/export.js";
 
 function couponNight() {
   let s = M.initialState();
   s = M.openTable(s, { tableId: "t1", now: at(13, 20), id: "a" });
-  s = M.closeTable(s, { tableId: "t1", now: at(13, 21) }); // $25.00
-  s = M.applyDiscount(s, { sessionId: "a", now: at(13, 21, 1) }); // -> $12.50
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 21, 36) }); // 96 min @ $25 = $40.00
+  s = M.applyDiscount(s, { sessionId: "a", now: at(13, 21, 37) }); // - $12.50 = $27.50
   s = M.openTable(s, { tableId: "t2", now: at(13, 20), id: "b" });
   s = M.closeTable(s, { tableId: "t2", now: at(13, 20, 17) }); // 17 min @ $25 = $7.08
-  s = M.applyDiscount(s, { sessionId: "b", now: at(13, 20, 18) }); // half of 708 = 354
-  s = M.openTable(s, { tableId: "t3", now: at(13, 20), id: "c" });
-  s = M.closeTable(s, { tableId: "t3", now: at(13, 20, 1) }); // 1 min = 41.67c -> 42c; half = 21c
-  s = M.applyDiscount(s, { sessionId: "c", now: at(13, 20, 2) });
+  s = M.applyDiscount(s, { sessionId: "b", now: at(13, 20, 18) }); // coupon covers it all: $0
   return s;
 }
 
-test("Half-off coupon halves the charge and shows in the night's totals", () => {
+test("$40 at $25/hr with a half-hour coupon = $40 - $12.50 = $27.50", () => {
   const s = couponNight();
-  const sum = M.daySummary(s, businessDateOf(at(13, 22)), at(13, 22));
-  eq(sum.fullTotalCents, 2500 + 708 + 42, "before coupons: ");
-  eq(sum.closedTotalCents, 1250 + 354 + 21, "collected: ");
-  eq(sum.couponCents, 1250 + 354 + 21, "coupons: ");
-  eq(sum.couponCount, 3);
+  const c = M.sessionCharge(s.sessions.find((x) => x.id === "a"), 0);
+  eq(c.fullCents, 4000);
+  eq(c.discountCents, 1250);
+  eq(c.chargedCents, 2750);
 });
 
-test("Odd cents round to the nearest cent: half of $0.43 is $0.22", () => {
-  const c = M.sessionCharge({ start: 0, end: 1, discount: { percent: 50 } }, 0);
-  eq(c.fullCents, 0); // sanity: tiny session
-  const c2 = M.sessionCharge({ start: at(13, 20), end: at(13, 20) + 62_000, discount: { percent: 50 } }, 0);
-  eq(c2.fullCents, 43); // 62 s at $25/hr = 43.06c
-  eq(c2.chargedCents, 22);
-  eq(c2.discountCents, 21);
+test("Coupon never takes off more than the bill (17 min game is free)", () => {
+  const c = M.sessionCharge(couponNight().sessions.find((x) => x.id === "b"), 0);
+  eq(c.discountCents, 708);
+  eq(c.chargedCents, 0);
+});
+
+test("Coupon uses the rate the table stopped on: Tue 5:30-6:30pm $18.50 - $11.00 = $7.50", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(10, 17, 30), id: "x" });
+  s = M.closeTable(s, { tableId: "t1", now: at(10, 18, 30) });
+  s = M.applyDiscount(s, { sessionId: "x", now: at(10, 18, 31) });
+  eq(M.sessionCharge(s.sessions[0], 0).chargedCents, 750);
+});
+
+test("After midnight Thursday the coupon is at Thursday's $22: $11.00 off", () => {
+  let s = M.openTable(M.initialState(), { tableId: "t1", now: at(13, 0, 30), id: "x" });
+  s = M.closeTable(s, { tableId: "t1", now: at(13, 1, 30) });
+  s = M.applyDiscount(s, { sessionId: "x", now: at(13, 1, 31) });
+  eq(M.sessionCharge(s.sessions[0], 0).discountCents, 1100);
+});
+
+test("Coupons show in the night's totals", () => {
+  const sum = M.daySummary(couponNight(), businessDateOf(at(13, 22)), at(13, 22));
+  eq(sum.fullTotalCents, 4708, "before coupons: ");
+  eq(sum.couponCents, 1958, "coupons: ");
+  eq(sum.closedTotalCents, 2750, "collected: ");
+  eq(sum.couponCount, 2);
+});
+
+test("Older half-off records still add up (half of $0.43 is $0.22)", () => {
+  const c = M.sessionCharge({ start: at(13, 20), end: at(13, 20) + 62_000, discount: { percent: 50 } }, 0);
+  eq(c.fullCents, 43);
+  eq(c.chargedCents, 22);
 });
 
 test("Coupon can be removed, and can't go on a running or voided table", () => {
-  let s = couponNight();
-  s = M.removeDiscount(s, { sessionId: "a", now: at(13, 23) });
-  eq(M.sessionCharge(s.sessions.find((x) => x.id === "a"), 0).chargedCents, 2500);
+  let s = M.removeDiscount(couponNight(), { sessionId: "a", now: at(13, 23) });
+  eq(M.sessionCharge(s.sessions.find((x) => x.id === "a"), 0).chargedCents, 4000);
   s = M.openTable(s, { tableId: "t4", now: at(13, 22), id: "run" });
   throws(() => M.applyDiscount(s, { sessionId: "run", now: at(13, 22, 5) }), "running");
   s = M.voidSession(s, { sessionId: "run", now: at(13, 22, 6) });
@@ -156,24 +176,24 @@ test("Coupon can be removed, and can't go on a running or voided table", () => {
 });
 
 test("Reopening a table takes its coupon off", () => {
-  let s = M.reopenSession(couponNight(), { sessionId: "a", now: at(13, 22) });
+  const s = M.reopenSession(couponNight(), { sessionId: "a", now: at(13, 22) });
   eq(s.sessions.find((x) => x.id === "a").discount, undefined);
 });
 
 test("Export shows full charge, coupon and charged columns", () => {
   const rows = parseCsv(sessionsCsv(couponNight(), { night: businessDateOf(at(13, 22)), now: at(13, 22) }));
   const t1 = rows.find((r) => r[2] === "Table 1");
-  eq(t1[9], "25.00");
+  eq(t1[9], "40.00");
   eq(t1[10], "12.50");
-  eq(t1[11], "12.50");
-  eq(t1[12], "Closed (Half-off coupon)");
+  eq(t1[11], "27.50");
+  eq(t1[12], "Closed (Half-hour coupon)");
   const total = rows[rows.length - 1];
-  eq(total[9], "32.50");
-  eq(total[10], "16.25");
-  eq(total[11], "16.25");
+  eq(total[9], "47.08");
+  eq(total[10], "19.58");
+  eq(total[11], "27.50");
 });
 
-test("Nightly totals export: one row per night with collected after coupons", () => {
+test("Nightly totals export: one row per night, collected after coupons", () => {
   let s = couponNight();
   s = M.openTable(s, { tableId: "t5", now: at(14, 14) }); // Saturday afternoon
   s = M.closeTable(s, { tableId: "t5", now: at(14, 15) }); // $15
@@ -181,6 +201,6 @@ test("Nightly totals export: one row per night with collected after coupons", ()
   s = M.voidSession(s, { sessionId: "v", now: at(14, 15, 1) });
   const rows = parseCsv(nightsCsv(s, { now: at(14, 16) }));
   eq(rows.length, 3, "header + 2 nights: ");
-  eq(rows[1].join("|"), "2026-11-13|Friday|3|1.30|32.50|3|16.25|16.25|0|0");
+  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0");
   eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0");
 });
