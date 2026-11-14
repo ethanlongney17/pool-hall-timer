@@ -5,7 +5,7 @@ import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/p
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "7";
+export const APP_VERSION = "8";
 
 const hall = currentHall();
 const store = createLocalStore(hall);

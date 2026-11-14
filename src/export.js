@@ -18,6 +18,8 @@ function hms(ms) {
   return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 const dollars = (cents) => (cents / 100).toFixed(2);
+// Every row says which floor it came from, so both floors can share one sheet.
+const floorName = (state) => (state.hall === "upstairs" ? "Upstairs" : "Downstairs");
 
 function csvCell(v) {
   const s = String(v ?? "");
@@ -27,7 +29,7 @@ const csvRow = (cells) => cells.map(csvCell).join(",");
 
 export const CSV_HEADER = [
   "Night", "Day", "Table", "Customer", "Started", "Stopped", "Time played", "Minutes", "Rate",
-  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)",
+  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)", "Floor",
 ];
 
 /**
@@ -37,6 +39,7 @@ export const CSV_HEADER = [
  */
 export function sessionsCsv(state, { night, now }) {
   const tableName = (id) => state.tables.find((t) => t.id === id)?.name ?? id;
+  const floor = floorName(state);
   const key = night ? night.getTime() : null;
   const sessions = state.sessions
     .filter((s) => key == null || businessDateOf(s.start).getTime() === key)
@@ -60,14 +63,14 @@ export function sessionsCsv(state, { night, now }) {
     return csvRow([
       ymd(bd), WEEKDAYS[bd.getDay()], tableName(s.tableId), s.name, dateTime(s.start),
       running ? "" : dateTime(s.end), hms(c.price.ms), (c.price.ms / 60000).toFixed(1), rates,
-      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "",
+      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floor,
     ]);
   });
 
   const lines = [csvRow(CSV_HEADER), ...rows];
   if (night) {
     lines.push("", csvRow(["Total (closed tables)", "", "", "", "", "", "", "", "",
-      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", ""]));
+      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floor]));
   }
   // The byte-order mark makes Excel read the file as UTF-8; Numbers ignores it.
   return "﻿" + lines.join("\r\n") + "\r\n";
@@ -75,12 +78,13 @@ export function sessionsCsv(state, { night, now }) {
 
 export const NIGHTS_HEADER = [
   "Night", "Day", "Tables played", "Hours played", "Full charges ($)", "Coupons used", "Coupons ($)",
-  "Collected ($)", "Voided", "Still running",
+  "Collected ($)", "Voided", "Still running", "Floor",
 ];
 
 /** One row per night: the figures to check against the POS. Oldest night first. */
 export function nightsCsv(state, { now }) {
   const nights = new Map();
+  const floor = floorName(state);
   for (const s of state.sessions) {
     const bd = businessDateOf(s.start);
     const k = bd.getTime();
@@ -100,7 +104,7 @@ export function nightsCsv(state, { now }) {
     .sort((a, b) => a.bd - b.bd)
     .map((n) => csvRow([
       ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
-      dollars(n.coupon), dollars(n.charged), n.voided, n.running,
+      dollars(n.coupon), dollars(n.charged), n.voided, n.running, floor,
     ]));
   return "﻿" + [csvRow(NIGHTS_HEADER), ...rows].join("\r\n") + "\r\n";
 }

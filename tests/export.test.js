@@ -201,8 +201,8 @@ test("Nightly totals export: one row per night, collected after coupons", () => 
   s = M.voidSession(s, { sessionId: "v", now: at(14, 15, 1) });
   const rows = parseCsv(nightsCsv(s, { now: at(14, 16) }));
   eq(rows.length, 3, "header + 2 nights: ");
-  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0");
-  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0");
+  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs");
+  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs");
 });
 
 test("Export lists paused time in its own column", () => {
@@ -252,4 +252,18 @@ test("Backups saved before upstairs existed count as downstairs", () => {
   delete old.state.hall;
   eq(parseBackup(JSON.stringify(old)).state.tables.length, 11);
   throws(() => parseBackup(JSON.stringify(old), "upstairs"), "old backup upstairs");
+});
+
+test("Every export row says which floor it's from, so floors can share one sheet", () => {
+  let up = M.openTable(M.initialState(HALLS.upstairs), { tableId: "u1", now: at(13, 20) });
+  up = M.closeTable(up, { tableId: "u1", now: at(13, 21) });
+  const rows = parseCsv(sessionsCsv(up, { night: businessDateOf(at(13, 22)), now: at(13, 22) }));
+  eq(rows[0][14], "Floor");
+  eq(rows[1][14], "Upstairs");
+  eq(rows[rows.length - 1][14], "Upstairs", "total row: ");
+  const nights = parseCsv(nightsCsv(up, { now: at(13, 22) }));
+  eq(nights[0][10], "Floor");
+  eq(nights[1][10], "Upstairs");
+  const down = parseCsv(sessionsCsv(sampleNight(), { now: at(14, 16) }));
+  eq(down[1][14], "Downstairs");
 });
