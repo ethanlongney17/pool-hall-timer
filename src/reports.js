@@ -88,6 +88,10 @@ function render() {
   const d = (key, opts) => (P ? deltaHtml(T[key], P[key], opts) : "");
   const label = PERIODS.find((p) => p.id === period).label;
   $("subtitle").textContent = `Both floors · ${label.toLowerCase()} · ${T.nights} night${T.nights === 1 ? "" : "s"} with games`;
+  // Say plainly when a period reaches back before the first recorded night.
+  const first = nights.find((n) => n.games);
+  const startNote = first && r.from < first.date
+    ? `<p class="r-note">Records start ${fmtNight(first.date)}, when the new system began. Earlier nights were on the old program and aren't included${r.prev ? ", so comparisons with the period before only count from then" : ""}.</p>` : "";
 
   if (!T.games) {
     $("report").innerHTML = `${demo ? "" : `<div class="tonight" id="tonight"></div>`}
@@ -98,6 +102,7 @@ function render() {
 
   $("report").innerHTML = `
     ${demo ? "" : `<div class="tonight" id="tonight"></div>`}
+    ${startNote}
     <section class="kpis" aria-label="Headline figures">
       <div class="kpi hero"><span class="k-label">Collected</span><span class="k-value">${money(T.collected)}</span>
         ${d("collected")}<span class="k-note">${money(T.perNight)} per night on average · after ${money(T.couponCents)} in coupons</span></div>
@@ -348,12 +353,17 @@ async function load(full = false) {
     allState = await store.loadAll({ full });
     render();
   } catch (e) {
-    toast(friendlyError(e), true);
+    const msg = friendlyError(e);
+    toast(msg, true);
+    if (!allState) {
+      $("report").innerHTML = `<p class="r-empty">Couldn't load the records: ${esc(msg)} Check the connection, then tap Refresh.</p>`;
+    }
   } finally {
     $("refreshBtn").disabled = false;
   }
 }
-$("refreshBtn").addEventListener("click", () => load(false));
+// Refresh fetches everything again, so it also fixes anything a device missed.
+$("refreshBtn").addEventListener("click", () => load(true));
 
 // ---------- Sign-in ----------
 const login = document.createElement("div");
@@ -445,6 +455,7 @@ $("mgrList").addEventListener("click", (e) => {
   });
 });
 
+window.__reportsReady = true; // tells the page's watchdog this script loaded
 renderPeriods();
 if (demo) {
   $("demoBanner").hidden = false;

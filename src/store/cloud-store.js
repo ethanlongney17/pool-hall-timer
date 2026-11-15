@@ -225,10 +225,18 @@ export function createCloudStore({ onAuthChange, onError }) {
      * `full: true` re-fetches everything.
      */
     async loadAll({ full = false } = {}) {
+      // A device's saved copy only holds every record if it has done a full
+      // load before: the staff apps only keep the last few days. So reuse the
+      // saved copy only after a full load in the past week; otherwise fetch
+      // everything.
+      const MARK = "poolhall.reports.fullLoadAt";
+      let lastFull = 0;
+      try { lastFull = Number(localStorage.getItem(MARK)) || 0; } catch {}
+      const useCache = !full && lastFull > 0 && Date.now() - lastFull < 7 * DAY;
       const all = {};
       for (const [col, field] of [["sessions", "start"], ["waitHistory", "addedAt"]]) {
         let cached = [];
-        if (!full) {
+        if (useCache) {
           try {
             cached = (await getDocsFromCache(collection(db, col))).docs.map((d) => ({ ...d.data(), id: d.id }));
           } catch {}
@@ -242,6 +250,9 @@ export function createCloudStore({ onAuthChange, onError }) {
         all[col] = [...byId.values()];
       }
       historyCache.set(0, all);
+      if (!useCache) {
+        try { localStorage.setItem(MARK, String(Date.now())); } catch {}
+      }
       return withExtra(state, all);
     },
 

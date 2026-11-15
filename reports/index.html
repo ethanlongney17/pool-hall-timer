@@ -54,5 +54,14 @@
 <div class="chart-tip" id="tip" role="status" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="../src/reports.js"></script>
+<script>
+  // If the page's code didn't load (for example a bad connection mid-update),
+  // say so instead of showing "Loading…" forever.
+  setTimeout(function () {
+    if (window.__reportsReady) return;
+    var m = document.getElementById("report");
+    if (m) m.innerHTML = '<p class="r-empty">The reports page didn\'t finish loading. Make sure you\'re online, then close the page and open it again.</p>';
+  }, 15000);
+</script>
 </body>
 </html>

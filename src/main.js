@@ -1,6 +1,6 @@
 import { createCloudStore } from "./store/cloud-store.js";
 import { currentHall, floorsShown, floorsInPlay, onlyFloors, floorOf, FLOORS } from "./halls.js";
-import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts, activeReservation } from "./model.js";
+import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts, activeReservation, recentWaitMs } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 import { friendlyError } from "./store/cloud-store.js";
@@ -8,7 +8,7 @@ import { makeManager, findManager, hasManagers } from "./pin.js";
 import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "17 (cloud)";
+export const APP_VERSION = "18 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -128,6 +128,11 @@ function tick() {
       case "estimate": {
         estimates ??= waitEstimates(inPlay(), now);
         el.textContent = fmtEstimate(estimates[Number(el.dataset.position)], el.dataset.style);
+        break;
+      }
+      case "recent": {
+        const r = recentWaitMs(store.get(), now);
+        el.textContent = r ? `Last ${r.count} parties seated waited about ${shortDur(r.ms)}` : "";
         break;
       }
       case "charge": {
@@ -258,7 +263,8 @@ function renderWaitlist(state) {
   }
   const n = state.waitlist.length;
   newWaitEl.innerHTML = `${n ? `<div class="wait-pos">A new party would be <b>#${n + 1}</b> on the list</div>` : ""}
-    <div data-live="estimate" data-position="${n}" data-style="new"></div>`;
+    <div data-live="estimate" data-position="${n}" data-style="new"></div>
+    <div class="wait-recent" data-live="recent"></div>`;
   $("waitCount").innerHTML = n ? `<span class="wait-count-big">${n}</span>` : "";
   $("waitList").innerHTML = state.waitlist.length
     ? state.waitlist

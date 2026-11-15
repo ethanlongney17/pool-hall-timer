@@ -237,3 +237,5 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 
 /* Void (needs a manager PIN) */
 .btn.void-btn { background: transparent; border-color: var(--danger); color: #ff9b9e; }
+
+.wait-recent { color: var(--muted); font-size: 13px; font-weight: 600; }

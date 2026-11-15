@@ -102,3 +102,5 @@ body.reports {
 .mgr-form label { color: var(--muted); font-weight: 600; font-size: 14px; }
 .remove-confirm { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
 .remove-confirm input { max-width: 220px; }
+
+.r-note { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--busy-line); border-radius: 10px; padding: 12px 14px; color: var(--text-2); }

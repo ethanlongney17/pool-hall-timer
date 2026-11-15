@@ -44,7 +44,7 @@ test("Wait estimates count upstairs tables when upstairs is open", () => {
   let s = building();
   for (const t of ALL_TABLES.filter((t) => t.floor === "downstairs")) s = M.openTable(s, { tableId: t.id, now: at(13, 20) });
   s = M.waitlistAdd(s, { name: "Sam", now: at(13, 20, 5) });
-  eq(M.waitEstimates(onlyFloors(s, floorsInPlay(false)), at(13, 20, 10))[0], 50 * MINUTE, "closed: wait for downstairs: ");
+  eq(M.waitEstimates(onlyFloors(s, floorsInPlay(false)), at(13, 20, 10))[0], 60 * MINUTE, "closed: wait for downstairs: ");
   eq(M.waitEstimates(onlyFloors(s, floorsInPlay(true)), at(13, 20, 10))[0], 0, "open: upstairs table free: ");
 });
 
@@ -191,7 +191,7 @@ test("A table being cleaned counts as free in about 5 minutes for wait estimates
   let s = upstairsGame();
   for (const t of ALL_TABLES.filter((t) => t.id !== "u2")) s = M.openTable(s, { tableId: t.id, now: at(13, 21) });
   s = M.waitlistAdd(s, { name: "Sam", now: at(13, 21) });
-  eq(M.waitEstimates(s, at(13, 21, 5))[0], 5 * MINUTE);
+  eq(M.waitEstimates(s, at(13, 21, 5))[0], 15 * MINUTE, "5 min cleaning + 10 to seat: ");
 });
 
 test("Ready and acknowledged are synced like any other change", () => {
@@ -235,7 +235,7 @@ test("Reserved tables are left out of wait estimates", () => {
   s = reserve(s, "t4", at(13, 19));
   s = M.waitlistAdd(s, { name: "Sam", now: at(13, 20, 5) });
   const down = onlyFloors(s, ["downstairs"]);
-  eq(M.waitEstimates(down, at(13, 20, 10))[0], 50 * MINUTE, "waits for a running table, not the reserved one: ");
+  eq(M.waitEstimates(down, at(13, 20, 10))[0], 60 * MINUTE, "waits for a running table, not the reserved one: ");
 });
 
 test("A reserved upstairs table doesn't send a 'ready' notice", () => {

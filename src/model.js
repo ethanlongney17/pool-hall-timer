@@ -399,39 +399,66 @@ export function seatFromWaitlist(state, { waitId, tableId, now }) {
 
 const MIN = 60_000;
 const DEFAULT_GAME_MS = 60 * MIN; // used until there are enough games to learn from
-const MIN_REMAINING_MS = 5 * MIN; // a table past its typical length is "any minute now"
+const CLEANING_MS = 5 * MIN; // an upstairs table being cleaned is ready in a few minutes
+const OVERDUE_FALLBACK_MS = 15 * MIN; // a table longer than almost every past game
+// Time between a table finishing and the next party starting on it (paying,
+// clearing, finding the next party). Chosen by replaying Nov 14 2026's real
+// waitlist: with it, estimates were balanced instead of always too short.
+const SEATING_MS = 10 * MIN;
 
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
+const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 /**
- * How long a game usually lasts here: the median of the last 100 finished games
- * (at least 10 of them, and ignoring quick 3-minute ones), else 60 minutes.
+ * How long recent games lasted (time played, pauses left out): the last 200
+ * finished games, ignoring quick ones under 3 minutes (mistakes and tests).
  */
-export function typicalGameMs(state) {
-  const lengths = state.sessions
+export function gameLengths(state) {
+  return state.sessions
     .filter((s) => s.end != null && !s.voidedAt)
     .sort((a, b) => b.end - a.end)
-    .slice(0, 100)
+    .slice(0, 200)
     .map((s) => s.end - s.start - pausedMs(s, s.end))
     .filter((ms) => ms >= 3 * MIN);
+}
+
+/** How long a game usually lasts here (the median), or 60 minutes until there are 10 games to learn from. */
+export function typicalGameMs(state) {
+  const lengths = gameLengths(state);
   return lengths.length >= 10 ? median(lengths) : DEFAULT_GAME_MS;
+}
+
+/**
+ * How much longer a game that has already run `played` is likely to go.
+ * Looks at past games that ran at least that long and takes the middle
+ * (median) of how much longer they went. Games here often run 2 hours or
+ * more, so a table past the usual length is not "about to finish". With
+ * little history, assumes 60-minute games.
+ */
+export function expectedRemainingMs(lengths, played) {
+  if (lengths.length < 10) return Math.max(DEFAULT_GAME_MS - played, OVERDUE_FALLBACK_MS);
+  const longer = lengths.filter((L) => L > played);
+  if (longer.length >= 5) return Math.max(5 * MIN, median(longer) - played);
+  return OVERDUE_FALLBACK_MS;
 }
 
 /**
  * Estimated wait for each person on the list, in order, plus for a party
  * joining now (the last value). 0 means a table is free now.
  *
- * Each running table is expected to finish when it reaches the typical game
- * length (or in about 5 minutes if it's already past it). The 1st person in
- * line gets the soonest table, the 2nd the next, and so on; once every table
- * is spoken for, the line wraps around for another game.
+ * Each running table is expected to finish after its likely remaining time
+ * (see expectedRemainingMs), plus about 10 minutes to clear it and seat the
+ * next party. The 1st person in line gets the soonest table,
+ * the 2nd the next, and so on; once every table is spoken for, the line
+ * wraps around for another full game.
  */
 export function waitEstimates(state, now) {
-  const typical = typicalGameMs(state);
+  const lengths = gameLengths(state);
+  const fullGame = lengths.length >= 10 ? median(lengths) : DEFAULT_GAME_MS;
   let free = 0;
   const remaining = [];
   for (const t of state.tables) {
@@ -441,22 +468,35 @@ export function waitEstimates(state, now) {
       continue;
     }
     if (status === "cleaning") {
-      remaining.push(MIN_REMAINING_MS); // ready in a few minutes
+      remaining.push(CLEANING_MS);
       continue;
     }
     if (status === "reserved") continue; // not available tonight
     const s = activeSession(state, t.id);
     const played = now - s.start - pausedMs(s, now);
-    remaining.push(Math.max(typical - played, MIN_REMAINING_MS));
+    remaining.push(expectedRemainingMs(lengths, played));
   }
   remaining.sort((a, b) => a - b);
   const estimateFor = (position) => {
     if (position < free) return 0;
     const j = position - free;
-    if (!remaining.length) return typical; // no tables at all: shouldn't happen
-    return remaining[j % remaining.length] + typical * Math.floor(j / remaining.length);
+    if (!remaining.length) return fullGame + SEATING_MS; // no tables at all: shouldn't happen
+    return remaining[j % remaining.length] + fullGame * Math.floor(j / remaining.length) + SEATING_MS;
   };
   return Array.from({ length: state.waitlist.length + 1 }, (_, i) => estimateFor(i));
+}
+
+/**
+ * How long the last few parties seated from the waitlist actually waited
+ * (within the last 90 minutes), so staff can sanity-check the estimate.
+ * null if fewer than 2.
+ */
+export function recentWaitMs(state, now, count = 3) {
+  const recent = (state.waitHistory ?? [])
+    .filter((w) => w.outcome === "seated" && w.endedAt <= now && now - w.endedAt <= 90 * MIN)
+    .sort((a, b) => b.endedAt - a.endedAt)
+    .slice(0, count);
+  return recent.length >= 2 ? { ms: mean(recent.map((w) => w.endedAt - w.addedAt)), count: recent.length } : null;
 }
 
 /** Real waits for one business night: who was seated, how long they waited, who left. */

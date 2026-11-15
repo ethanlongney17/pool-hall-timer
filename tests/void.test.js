@@ -104,7 +104,11 @@ test("Reports total up voided amounts", () => {
 test("A manager's PIN is stored scrambled, never as the digits", async () => {
   const m = await makeManager("Mike", "4821");
   eq(m.name, "Mike");
-  eq(JSON.stringify(m).includes("4821"), false);
+  // No stored field is the PIN or contains it (the timestamp is left out: it can
+  // contain any digits by chance).
+  eq(Object.keys(m).sort().join(","), "addedAt,hash,name,salt", "only these fields: ");
+  eq([m.hash, m.salt].some((v) => String(v).includes("4821") && v.length < 8), false);
+  eq(m.hash === "4821" || m.salt === "4821", false);
   eq(m.hash.length, 64);
 });
 

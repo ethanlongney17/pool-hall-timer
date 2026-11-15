@@ -249,17 +249,17 @@ test("Estimates: next table to finish goes to the first in line, then wraps arou
   s = M.waitlistAdd(s, { name: "P1", now: at(13, 20, 35) });
   s = M.waitlistAdd(s, { name: "P2", now: at(13, 20, 36) });
   s = M.waitlistAdd(s, { name: "P3", now: at(13, 20, 37) });
-  // At 20:40 with 60-min games: A finishes in 20 min, B in 50.
+  // At 20:40 with 60-min games: A finishes in 20 min, B in 50, plus 10 min to clear and seat.
   const e = M.waitEstimates(s, at(13, 20, 40)).map((ms) => ms / MINUTE);
-  eq(e.join(","), "20,50,80,110", "P1, P2, P3, new party: ");
+  eq(e.join(","), "30,60,90,120", "P1, P2, P3, new party: ");
 });
 
-test("A free table means no wait; a table past its usual length is ~5 min", () => {
+test("A free table means no wait; with no history, an overdue table is ~15 min (+10 to seat)", () => {
   let s = M.initialState(twoTables);
   s = M.openTable(s, { tableId: "a", now: at(13, 19) });
   eq(M.waitEstimates(s, at(13, 20, 40))[0], 0, "B is free: ");
   s = M.openTable(s, { tableId: "b", now: at(13, 20, 30) });
-  eq(M.waitEstimates(s, at(13, 20, 40))[0], 5 * MINUTE, "A has run 100 min: ");
+  eq(M.waitEstimates(s, at(13, 20, 40))[0], 25 * MINUTE, "A has run 100 min: ");
 });
 
 test("Paused time doesn't count toward a table finishing", () => {
@@ -269,8 +269,8 @@ test("Paused time doesn't count toward a table finishing", () => {
   s = M.pauseTable(s, { tableId: "a", now: at(13, 20, 10) }); // A played 10 min, then paused
   s = M.waitlistAdd(s, { name: "P1", now: at(13, 20, 35) });
   const e = M.waitEstimates(s, at(13, 20, 40)).map((ms) => ms / MINUTE);
-  eq(e[0], 20, "B (played 40) is next: ");
-  eq(e[1], 50, "A (played 10) after: ");
+  eq(e[0], 30, "B (played 40) is next: ");
+  eq(e[1], 60, "A (played 10) after: ");
 });
 
 test("Removing someone from the waitlist can be undone: back in their place, not counted as left", () => {
@@ -357,4 +357,56 @@ test("Games that finished before rounding started keep their exact amounts", () 
   u = M.closeTable(u, { tableId: "t1", now: new Date(2026, 10, 14, 17, 46).getTime() + 30_000 }); // 2.5 min, finished after
   eq(M.sessionCharge(u.sessions[0], 0).fullCents, 63);
   eq(M.sessionCharge(u.sessions[0], 0).chargedCents, 75, "finished after: rounded: ");
+});
+
+// --- Wait estimates that learn from long games (fix for Nov 14 2026) ---------------
+
+const lengthsMin = (xs) => xs.map((m) => m * MINUTE);
+// Roughly last Saturday's spread: middle game ~80 min, a quarter over 2 hours.
+const SAT = lengthsMin([14, 21, 38, 41, 44, 45, 48, 50, 55, 58, 60, 62, 65, 72, 75, 78, 80, 82, 85, 89, 95, 99, 102, 112,
+  116, 123, 124, 125, 127, 128, 132, 135, 137, 139, 140, 142, 146, 160, 166, 177, 182, 247]);
+
+test("A table past the usual length isn't 'about to finish': 90 min in, games like it ran ~35 more", () => {
+  const r = M.expectedRemainingMs(SAT, 90 * MINUTE) / MINUTE;
+  eq(r >= 30 && r <= 45, true, `got ${r}: `);
+});
+
+test("A table just started is expected to run about a full game", () => {
+  const r = M.expectedRemainingMs(SAT, 5 * MINUTE) / MINUTE;
+  eq(r >= 90 && r <= 115, true, `got ${r}: `);
+});
+
+test("A table longer than almost every past game gets 15 more minutes", () => {
+  eq(M.expectedRemainingMs(SAT, 200 * MINUTE), 15 * MINUTE);
+});
+
+test("A busy night with every table over an hour no longer says '5 minutes' to everyone", () => {
+  let s = M.initialState();
+  // History: last Saturday's games.
+  let t0 = at(1, 12); // history well before tonight
+  SAT.forEach((ms, i) => {
+    s = M.openTable(s, { tableId: "t1", now: t0, id: `h${i}` });
+    s = M.closeTable(s, { tableId: "t1", now: t0 + ms });
+    t0 += ms + MINUTE;
+  });
+  const now = at(14, 22);
+  for (const t of s.tables) s = M.openTable(s, { tableId: t.id, now: now - 80 * MINUTE });
+  for (let i = 0; i < 4; i++) s = M.waitlistAdd(s, { name: `P${i}`, now: now - 5 * MINUTE });
+  const e = M.waitEstimates(s, now).map((ms) => Math.round(ms / MINUTE));
+  eq(e.every((m) => m >= 30), true, `everyone told at least 30 min, got ${e.join(",")}: `);
+});
+
+test("Recent real waits: the last 3 parties seated in the past 90 minutes", () => {
+  let s = M.initialState();
+  const waits = [[20, 60], [20, 30, 20, 70], [20, 40, 21, 30]]; // joined, seated
+  waits.forEach(([dh, dm, sh = dh + 1, sm = 0], i) => {
+    s = M.waitlistAdd(s, { name: `W${i}`, now: at(13, dh, dm % 60), id: `w${i}` });
+  });
+  s = M.seatFromWaitlist(s, { waitId: "w0", tableId: "t1", now: at(13, 21, 0) });  // waited 60
+  s = M.seatFromWaitlist(s, { waitId: "w1", tableId: "t2", now: at(13, 21, 10) }); // waited 40
+  s = M.seatFromWaitlist(s, { waitId: "w2", tableId: "t3", now: at(13, 21, 30) }); // waited 50
+  const r = M.recentWaitMs(s, at(13, 21, 45));
+  eq(r.count, 3);
+  eq(Math.round(r.ms / MINUTE), 50);
+  eq(M.recentWaitMs(s, at(13, 23, 30)), null, "nothing in the last 90 min: ");
 });
