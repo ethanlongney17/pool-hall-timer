@@ -13,7 +13,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, onSnapshot, query, where, writeBatch, getDocs, getDocsFromCache, setDoc,
+  collection, doc, onSnapshot, query, where, writeBatch, getDocs, getDocsFromCache, setDoc, deleteField,
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "../firebase-config.js";
 import { actions } from "../model.js";
@@ -46,7 +46,7 @@ export function createCloudStore({ onAuthChange, onError }) {
 
   const recentFrom = Date.now() - RECENT_DAYS * DAY;
   const mirror = createMirror();
-  let base = { version: 1, hall: "building", tables: ALL_TABLES.map((t) => ({ ...t })), upstairsOpen: false };
+  let base = { version: 1, hall: "building", tables: ALL_TABLES.map((t) => ({ ...t })), upstairsOpen: false, reservations: {} };
   let state = mirror.state(base);
   let user = null;
   let unsubs = [];
@@ -85,6 +85,10 @@ export function createCloudStore({ onAuthChange, onError }) {
       watch("waitHistory", query(collection(db, "waitHistory"), where("addedAt", ">=", recentFrom))),
       onSnapshot(doc(db, "settings", "floors"), (snap) => {
         base = { ...base, upstairsOpen: !!snap.data()?.upstairsOpen };
+        rebuild();
+      }, fail),
+      onSnapshot(doc(db, "settings", "reservations"), (snap) => {
+        base = { ...base, reservations: snap.data() ?? {} };
         rebuild();
       }, fail),
     ];
@@ -156,6 +160,22 @@ export function createCloudStore({ onAuthChange, onError }) {
       base = { ...base, upstairsOpen: open };
       rebuild();
       setDoc(doc(db, "settings", "floors"), { upstairsOpen: open, changedAt: Date.now() }, { merge: true }).catch(fail);
+    },
+
+    // --- Reserved tables, shared by every device ---
+    reserveTable(tableId, { name = "" } = {}) {
+      if (!user) throw new Error("Sign in first");
+      const r = { name: name.trim(), at: Date.now() };
+      base = { ...base, reservations: { ...base.reservations, [tableId]: r } };
+      rebuild();
+      setDoc(doc(db, "settings", "reservations"), { [tableId]: r }, { merge: true }).catch(fail);
+    },
+    unreserveTable(tableId) {
+      if (!user) throw new Error("Sign in first");
+      const { [tableId]: _gone, ...rest } = base.reservations;
+      base = { ...base, reservations: rest };
+      rebuild();
+      setDoc(doc(db, "settings", "reservations"), { [tableId]: deleteField() }, { merge: true }).catch(fail);
     },
 
     // --- Older nights ---

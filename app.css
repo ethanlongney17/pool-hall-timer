@@ -229,3 +229,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
   color: #0d141b; font-size: 20px; font-weight: 800; text-align: center; vertical-align: middle; }
 .wait-pos { font-size: 16px; color: var(--text); font-weight: 600; }
 .wait-pos b { font-size: 24px; color: var(--busy-text); }
+
+/* Reserved (prepaid) tables */
+.table-card.reserved { background: #1d2333; border-color: #7b8db8; border-style: dashed; }
+.table-card.reserved .t-who { color: #c6d2f0; font-weight: 600; min-height: 1.4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-card.reserved .t-state { color: #c6d2f0; font-weight: 700; margin-top: auto; }

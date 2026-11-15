@@ -67,9 +67,22 @@ function lastFinished(state, tableId) {
 }
 const sameNight = (a, b) => businessDateOf(a).getTime() === businessDateOf(b).getTime();
 
-/** "running", "cleaning" or "free". Only tonight's games leave a table to clean. */
+// ---------- Reservations ----------
+// A reserved table is prepaid and blocked for the night: no timer or charge,
+// not offered for seating, left out of free counts and wait estimates.
+// Kept in state.reservations = { tableId: { name, at } } (shared by every
+// device) and only counts on the night it was made, so it clears at 6am.
+
+export function activeReservation(state, tableId, now) {
+  const r = state.reservations?.[tableId];
+  if (!r || !Number.isFinite(r.at)) return null;
+  return sameNight(r.at, now) ? r : null;
+}
+
+/** "running", "reserved", "cleaning" or "free". */
 export function tableStatus(state, tableId, now) {
   if (activeSession(state, tableId)) return "running";
+  if (activeReservation(state, tableId, now)) return "reserved";
   if (!CLEANING_FLOORS.includes(floorOf(state, tableId))) return "free";
   const last = lastFinished(state, tableId);
   if (last && last.readyAt == null && sameNight(last.end, now)) return "cleaning";
@@ -403,6 +416,7 @@ export function waitEstimates(state, now) {
       remaining.push(MIN_REMAINING_MS); // ready in a few minutes
       continue;
     }
+    if (status === "reserved") continue; // not available tonight
     const s = activeSession(state, t.id);
     const played = now - s.start - pausedMs(s, now);
     remaining.push(Math.max(typical - played, MIN_REMAINING_MS));

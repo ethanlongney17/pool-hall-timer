@@ -1,12 +1,12 @@
 import { createCloudStore } from "./store/cloud-store.js";
 import { currentHall, floorsShown, floorsInPlay, onlyFloors, floorOf, FLOORS } from "./halls.js";
-import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts } from "./model.js";
+import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts, activeReservation } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 import { friendlyError } from "./store/cloud-store.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "15 (cloud)";
+export const APP_VERSION = "16 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -149,10 +149,12 @@ function renderTables(state) {
   const statuses = state.tables.map((t) => tableStatus(state, t.id, now));
   const freeCount = statuses.filter((x) => x === "free").length;
   const cleaningCount = statuses.filter((x) => x === "cleaning").length;
+  const reservedCount = statuses.filter((x) => x === "reserved").length;
   const waiting = store.get().waitlist.length;
   const strip = `<div class="summary-strip">
     <span class="${freeCount ? "good" : ""}"><b>${freeCount}</b> table${freeCount === 1 ? "" : "s"} free</span>
     ${cleaningCount ? `<span><b>${cleaningCount}</b> being cleaned</span>` : ""}
+    ${reservedCount ? `<span><b>${reservedCount}</b> reserved</span>` : ""}
     <span class="${waiting ? "warn" : ""}"><b>${waiting}</b> on the waitlist</span></div>`;
   $("tables").innerHTML = strip + readyBanner() + closedNote + floors.map((f) => {
     const heading = floors.length > 1 ? `<h3 class="floor-head">${FLOORS[f].name}</h3>` : "";
@@ -211,6 +213,13 @@ function tableCard(t) {
       const s = activeSession(state, t.id);
       if (!s) {
         const status = tableStatus(state, t.id, Date.now());
+        if (status === "reserved") {
+          const r = activeReservation(state, t.id, Date.now());
+          return `<button class="table-card reserved" data-table="${t.id}">
+            <span class="t-name">${esc(t.name)}</span>
+            <span class="t-who">${r.name ? esc(r.name) : ""}</span>
+            <span class="t-state">Reserved · prepaid</span></button>`;
+        }
         if (status === "cleaning") {
           return `<button class="table-card cleaning" data-table="${t.id}">
             <span class="t-name">${esc(t.name)}</span>
@@ -335,6 +344,45 @@ function freeTables() {
   return state.tables.filter((t) => tableStatus(state, t.id, now) === "free");
 }
 
+function showReserve(tableId) {
+  askSheet({
+    title: `Reserve ${tableName(tableId)} for tonight?`,
+    text: "For prepaid bookings: no timer and no charge. The table is blocked on both iPads until you remove the reservation, or 6am.",
+    confirmLabel: "Reserve table",
+    input: { value: "", placeholder: "Name on the booking (optional)", max: 40 },
+    onConfirm: (name) => {
+      store.reserveTable(tableId, { name });
+      closeSheet();
+      toast(`${tableName(tableId)} reserved`, false, { label: "Undo", fn: () => store.unreserveTable(tableId) });
+    },
+    onBack: () => showOpen(tableId),
+  });
+}
+
+function showReserved(tableId) {
+  const r = activeReservation(store.get(), tableId, Date.now());
+  if (!r) return showOpen(tableId);
+  showSheet({
+    render: () => `<div class="sheet">
+      ${head(`${esc(tableName(tableId))}: reserved`, `${r.name ? `${esc(r.name)} · ` : ""}reserved at ${fmtTime(r.at)} · prepaid, no timer`)}
+      <button class="btn primary big" data-act="unreserve">Remove reservation</button>
+      <button class="btn" data-act="start">Start a timed game here anyway</button>
+    </div>`,
+    handlers: {
+      unreserve: () => {
+        const saved = { ...r };
+        store.unreserveTable(tableId);
+        closeSheet();
+        toast(`${tableName(tableId)} is available again`, false, { label: "Undo", fn: () => store.reserveTable(tableId, saved) });
+      },
+      start: () => {
+        store.unreserveTable(tableId);
+        showOpen(tableId);
+      },
+    },
+  });
+}
+
 function showCleaning(tableId) {
   const upstairsApp = hall.id === "upstairs";
   showSheet({
@@ -368,6 +416,7 @@ function showOpen(tableId) {
       ${head(`Open ${esc(tableName(tableId))}`, `Rate now: ${fmtRate(rateAt(Date.now()).centsPerHour)}`)}
       <form id="openForm" autocomplete="off"><input id="openName" placeholder="Customer name (optional)" maxlength="40" enterkeyhint="go"></form>
       <button class="btn primary big" data-act="start">Start timer</button>
+      <button class="btn" data-act="reserve">Reserve this table (prepaid, no timer)</button>
       ${waitlist.length ? `<div class="sub" style="margin-top:4px">Or seat someone from the waitlist:</div>
         <div class="choices">${waitlist.map((w) => `<button class="btn chip" data-act="seat" data-id="${w.id}">${esc(w.name)}</button>`).join("")}</div>` : ""}
     </div>`,
@@ -378,6 +427,7 @@ function showOpen(tableId) {
       }),
     handlers: {
       start: () => start($("openName").value),
+      reserve: () => showReserve(tableId),
       seat: ({ id }) => {
         act("seatFromWaitlist", { waitId: id, tableId });
         closeSheet();
@@ -727,6 +777,7 @@ $("tables").addEventListener("click", (e) => {
     const status = tableStatus(store.get(), id, Date.now());
     if (status === "running") return showRunning(id);
     if (status === "cleaning") return showCleaning(id);
+    if (status === "reserved") return showReserved(id);
     if (alertsFor().some((a) => a.tableId === id)) act("ackTableReady", { tableId: id });
     showOpen(id);
   });

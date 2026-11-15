@@ -201,3 +201,52 @@ test("Ready and acknowledged are synced like any other change", () => {
   eq(ops.length, 1);
   eq(ops[0].col + " " + ops[0].id + " " + ops[0].data.readyAt, `sessions g ${at(13, 21, 8)}`);
 });
+
+// --- Reserved (prepaid) tables ----------------------------------------------------------
+
+const reserve = (s, tableId, at, name = "Smith") => ({ ...s, reservations: { ...(s.reservations ?? {}), [tableId]: { name, at } } });
+const unreserve = (s, tableId) => {
+  const { [tableId]: _gone, ...rest } = s.reservations ?? {};
+  return { ...s, reservations: rest };
+};
+
+test("A reserved table is blocked: not free, not offered, no charge", () => {
+  const s = reserve(building(), "t4", at(13, 19));
+  eq(M.tableStatus(s, "t4", at(13, 20)), "reserved");
+  eq(M.activeReservation(s, "t4", at(13, 20)).name, "Smith");
+  const sum = M.daySummary(s, businessDateOf(at(13, 22)), at(13, 22));
+  eq(sum.closedTotalCents + sum.openRunningCents, 0);
+});
+
+test("Removing the reservation makes the table available straight away", () => {
+  const s = unreserve(reserve(building(), "t4", at(13, 19)), "t4");
+  eq(M.tableStatus(s, "t4", at(13, 20)), "free");
+});
+
+test("Reservations clear themselves at 6am (the next night)", () => {
+  const s = reserve(building(), "t4", at(13, 19));
+  eq(M.tableStatus(s, "t4", at(14, 1)), "reserved", "1am is still tonight: ");
+  eq(M.tableStatus(s, "t4", at(14, 7)), "free", "7am next day: ");
+});
+
+test("Reserved tables are left out of wait estimates", () => {
+  let s = building();
+  for (const t of ALL_TABLES.filter((t) => t.floor === "downstairs" && t.id !== "t4")) s = M.openTable(s, { tableId: t.id, now: at(13, 20) });
+  s = reserve(s, "t4", at(13, 19));
+  s = M.waitlistAdd(s, { name: "Sam", now: at(13, 20, 5) });
+  const down = onlyFloors(s, ["downstairs"]);
+  eq(M.waitEstimates(down, at(13, 20, 10))[0], 50 * MINUTE, "waits for a running table, not the reserved one: ");
+});
+
+test("A reserved upstairs table doesn't send a 'ready' notice", () => {
+  let s = M.openTable(building(), { tableId: "u2", now: at(13, 18), id: "g" });
+  s = M.closeTable(s, { tableId: "u2", now: at(13, 19) });
+  s = M.markTableReady(s, { tableId: "u2", now: at(13, 19, 5) });
+  s = reserve(s, "u2", at(13, 19, 6));
+  eq(M.readyAlerts(s, at(13, 19, 7)).length, 0);
+});
+
+test("Reservations sync without touching any game records", () => {
+  const s0 = building();
+  eq(diffState(s0, reserve(s0, "t4", at(13, 19))).length, 0);
+});
