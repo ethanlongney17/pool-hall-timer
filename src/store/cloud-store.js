@@ -46,7 +46,7 @@ export function createCloudStore({ onAuthChange, onError }) {
 
   const recentFrom = Date.now() - RECENT_DAYS * DAY;
   const mirror = createMirror();
-  let base = { version: 1, hall: "building", tables: ALL_TABLES.map((t) => ({ ...t })), upstairsOpen: false, reservations: {} };
+  let base = { version: 1, hall: "building", tables: ALL_TABLES.map((t) => ({ ...t })), upstairsOpen: false, reservations: {}, managers: {} };
   let state = mirror.state(base);
   let user = null;
   let unsubs = [];
@@ -89,6 +89,10 @@ export function createCloudStore({ onAuthChange, onError }) {
       }, fail),
       onSnapshot(doc(db, "settings", "reservations"), (snap) => {
         base = { ...base, reservations: snap.data() ?? {} };
+        rebuild();
+      }, fail),
+      onSnapshot(doc(db, "settings", "managers"), (snap) => {
+        base = { ...base, managers: snap.data() ?? {} };
         rebuild();
       }, fail),
     ];
@@ -176,6 +180,21 @@ export function createCloudStore({ onAuthChange, onError }) {
       base = { ...base, reservations: rest };
       rebuild();
       setDoc(doc(db, "settings", "reservations"), { [tableId]: deleteField() }, { merge: true }).catch(fail);
+    },
+
+    // --- Manager PINs (stored scrambled; see pin.js) ---
+    addManager(id, record) {
+      if (!user) throw new Error("Sign in first");
+      base = { ...base, managers: { ...base.managers, [id]: record } };
+      rebuild();
+      setDoc(doc(db, "settings", "managers"), { [id]: record }, { merge: true }).catch(fail);
+    },
+    removeManager(id) {
+      if (!user) throw new Error("Sign in first");
+      const { [id]: _gone, ...rest } = base.managers;
+      base = { ...base, managers: rest };
+      rebuild();
+      setDoc(doc(db, "settings", "managers"), { [id]: deleteField() }, { merge: true }).catch(fail);
     },
 
     // --- Older nights ---

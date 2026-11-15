@@ -4,9 +4,11 @@ import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedM
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
 import { sessionsCsv, nightsCsv, backupJson, parseBackup, offerFile, ymd } from "./export.js";
 import { friendlyError } from "./store/cloud-store.js";
+import { makeManager, findManager, hasManagers } from "./pin.js";
+import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "16 (cloud)";
+export const APP_VERSION = "17 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -459,7 +461,7 @@ function showRunning(tableId) {
         <button class="btn" data-act="move">Move to another table</button>
         <button class="btn" data-act="rename">${s.name ? "Edit name" : "Add name"}</button>
       </div>
-      <button class="btn link" data-act="void">Opened by mistake? Void this table</button>
+      <button class="btn void-btn" data-act="void">Void (no charge, needs a manager PIN)</button>
     </div>`,
     handlers: {
       pause: () => {
@@ -512,7 +514,8 @@ function showReceipt(sessionId, { back, from } = {}) {
     : `<button class="btn primary big" data-act="close">Done</button>`;
   showSheet({
     render: () => `<div class="sheet">
-      ${head(`${esc(tableName(s.tableId))} ${s.voidedAt ? "voided" : "closed"}`, s.name ? esc(s.name) : "")}
+      ${head(`${esc(tableName(s.tableId))} ${s.voidedAt ? "voided" : "closed"}`, [s.name ? esc(s.name) : "",
+        s.voidedAt ? `Voided${s.voidReason ? `: ${esc(s.voidReason)}` : ""}${s.voidApprovedBy ? ` · approved by ${esc(s.voidApprovedBy)}` : ""}` : ""].filter(Boolean).join(" · "))}
       ${s.discount ? `<div class="was">${formatCents(c.fullCents)}</div>` : ""}
       <div class="big-num">${formatCents(c.chargedCents)}</div>
       ${s.discount ? `<div class="coupon-tag">${esc(s.discount.label)} applied: −${formatCents(c.discountCents)}</div>` : ""}
@@ -528,6 +531,7 @@ function showReceipt(sessionId, { back, from } = {}) {
         ? `<button class="btn" data-act="uncoupon">Remove coupon</button>`
         : `<button class="btn coupon" data-act="coupon">Apply half-hour coupon (−${formatCents(halfHourOff)})</button>`}
       ${done}
+      ${s.voidedAt || !live ? "" : `<button class="btn void-btn" data-act="void">Void this game (needs a manager PIN)</button>`}
       ${back || s.voidedAt || !live ? "" : `<button class="btn link" data-act="reopen">Closed by mistake? Reopen table</button>`}
     </div>`,
     handlers: {
@@ -542,6 +546,7 @@ function showReceipt(sessionId, { back, from } = {}) {
         toast("Coupon removed");
       },
       back: () => back?.(),
+      void: () => showVoid(sessionId, { back }),
       reopen: () => {
         act("reopenSession", { sessionId });
         closeSheet();
@@ -571,22 +576,59 @@ function showMove(fromTableId) {
   });
 }
 
-function showVoid(sessionId) {
+// Voiding needs a manager's PIN. The first time, when no managers exist yet,
+// it asks for a name and new PIN to create the first manager instead.
+// More managers are added on the owners' Reports page.
+function showVoid(sessionId, { back } = {}) {
   const s = store.get().sessions.find((x) => x.id === sessionId);
+  if (!s || s.voidedAt) return closeSheet();
+  const running = s.end == null;
+  const firstManager = !hasManagers(store.get().managers);
+  const charged = sessionCharge(s, Date.now()).chargedCents;
+  const goBack = () => (running ? showRunning(s.tableId) : showReceipt(sessionId, { back }));
   showSheet({
     render: () => `<div class="sheet">
-      ${head(`Void ${esc(tableName(s.tableId))}?`, "Use this only if the table was opened by mistake. No charge is recorded; it stays in today's list as voided.")}
+      ${head(`Void ${esc(tableName(s.tableId))}?`, running
+        ? "No charge. The table is freed and the game stays in tonight's list as voided."
+        : `No charge for this game (was ${formatCents(charged)}). If it was already paid, refund it on the POS too.`)}
       <input id="voidReason" placeholder="Reason (optional)" maxlength="80">
-      <button class="btn danger big" data-act="confirm">Void — no charge</button>
+      ${firstManager ? `<div class="sub">No manager PINs are set up yet. Create the first manager to approve this void:</div>
+        <input id="mgrName" placeholder="Manager's name" maxlength="30" autocomplete="off">
+        <input id="mgrPin" type="password" inputmode="numeric" pattern="[0-9]*" placeholder="New PIN (4–8 digits)" maxlength="8" autocomplete="off">`
+        : `<input id="mgrPin" type="password" inputmode="numeric" pattern="[0-9]*" placeholder="Manager PIN" maxlength="8" autocomplete="off">`}
+      <div class="login-error" id="voidError" role="alert"></div>
+      <button class="btn danger big" data-act="confirm">Void: no charge</button>
       <button class="btn" data-act="back">Back</button>
     </div>`,
     handlers: {
-      confirm: () => {
-        act("voidSession", { sessionId, reason: $("voidReason").value });
-        closeSheet();
-        toast("Table voided");
+      confirm: async () => {
+        const err = $("voidError");
+        err.textContent = "";
+        try {
+          let approver;
+          if (firstManager) {
+            const record = await makeManager($("mgrName").value, $("mgrPin").value);
+            store.addManager(newId(), record);
+            approver = record.name;
+          } else {
+            const m = await findManager(store.get().managers, $("mgrPin").value);
+            if (!m) {
+              err.textContent = "That PIN isn't right. Ask a manager to enter theirs.";
+              $("mgrPin").value = "";
+              return;
+            }
+            approver = m.name;
+          }
+          act("voidSession", { sessionId, reason: $("voidReason").value, approvedBy: approver });
+          closeSheet();
+          toast(`${tableName(s.tableId)} voided, approved by ${approver}`, false, {
+            label: "Undo", fn: () => act("unvoidSession", { sessionId }),
+          });
+        } catch (e) {
+          err.textContent = e.message || String(e);
+        }
       },
-      back: () => showRunning(s.tableId),
+      back: goBack,
     },
   });
 }
@@ -635,7 +677,7 @@ function showToday(dayOffset = 0) {
       const openIds = sum.open.map((s) => s.id).join(",");
       const row = (s, cls = "") => `<tr class="tap ${cls}" data-act="receipt" data-id="${s.id}"><td>${esc(tableName(s.tableId))}</td><td>${esc(s.name)}</td>
         <td>${fmtTime(s.start)}–${fmtTime(s.end)}</td><td>${formatDuration(s.price.ms)}</td>
-        <td class="amt">${cls ? "void" : `${s.discount ? `<span class="half">coupon</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
+        <td class="amt">${cls ? `void · ${formatCents(voidedValueCents(s))}` : `${s.discount ? `<span class="half">coupon</span> ` : ""}${formatCents(s.charge.chargedCents)}`}</td></tr>`;
       return `<div class="sheet">
         ${head(dayOffset === 0 ? "Tonight's totals" : "Totals", `${fmtDay(day)} (6am to 6am)`)}
         <div class="big-num">${formatCents(sum.closedTotalCents)}</div>
@@ -645,6 +687,7 @@ function showToday(dayOffset = 0) {
         ${waitSummaryHtml(day, dayState)}
         ${sum.couponCount ? `<dl class="kv"><dt>Before coupons</dt><dd>${formatCents(sum.fullTotalCents)}</dd>
           <dt>Coupons used (${sum.couponCount})</dt><dd>−${formatCents(sum.couponCents)}</dd></dl>` : ""}
+        ${sum.voided.length ? `<dl class="kv"><dt>Voided (${sum.voided.length})</dt><dd>${formatCents(sum.voidedCents)} not charged</dd></dl>` : ""}
         ${sum.open.length ? `<dl class="kv"><dt>Still running (${sum.open.length})</dt><dd data-live="charge" data-sessions="${openIds}"></dd>
           <dt>Total if all closed now</dt><dd data-live="charge" data-base="${sum.closedTotalCents}" data-sessions="${openIds}"></dd></dl>` : ""}
         <div class="report"><table><thead><tr><th>Table</th><th>Name</th><th>Time</th><th>Played</th><th class="amt">Charged</th></tr></thead>

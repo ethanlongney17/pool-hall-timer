@@ -20,12 +20,13 @@
   import { tests as exporting } from "./export.test.js";
   import { tests as cloud } from "./cloud.test.js";
   import { tests as reports } from "./reports.test.js";
-  const tests = [...pricing, ...model, ...exporting, ...cloud, ...reports];
+  import { tests as voids } from "./void.test.js";
+  const tests = [...pricing, ...model, ...exporting, ...cloud, ...reports, ...voids];
   const ul = document.getElementById("results");
   const results = [];
   for (const t of tests) {
     const li = document.createElement("li");
-    try { t.fn(); li.className = "pass"; li.textContent = "✓ " + t.name; results.push({ name: t.name, ok: true }); }
+    try { await t.fn(); li.className = "pass"; li.textContent = "✓ " + t.name; results.push({ name: t.name, ok: true }); }
     catch (e) { li.className = "fail"; li.textContent = "✗ " + t.name; const pre = document.createElement("pre"); pre.textContent = e.message; li.append(pre); results.push({ name: t.name, ok: false, error: e.message }); }
     ul.append(li);
   }

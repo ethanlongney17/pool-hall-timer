@@ -202,8 +202,8 @@ test("Nightly totals export: one row per night, collected after coupons", () => 
   s = M.voidSession(s, { sessionId: "v", now: at(14, 15, 1) });
   const rows = parseCsv(nightsCsv(s, { now: at(14, 16) }));
   eq(rows.length, 3, "header + 2 nights: ");
-  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs|0|||0|27.50|0.00");
-  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs|0|||0|15.00|0.00");
+  eq(rows[1].join("|"), "2026-11-13|Friday|2|1.88|47.08|2|19.58|27.50|0|0|Downstairs|0|||0|27.50|0.00|0.00");
+  eq(rows[2].join("|"), "2026-11-14|Saturday|1|1.00|15.00|0|0.00|15.00|1|0|Downstairs|0|||0|15.00|0.00|0.25"); // 1-minute voided game: $0.25 written off
 });
 
 test("Export lists paused time in its own column", () => {

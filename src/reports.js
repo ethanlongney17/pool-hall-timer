@@ -12,6 +12,8 @@ import {
   nightSummaries, PERIODS, periodRange, inRange, totals, change, byWeekday, busyHours, revenueBars, sampleState, nightKey,
 } from "./reports-data.js";
 import { offerFile } from "./export.js";
+import { makeManager, findManager, hasManagers } from "./pin.js";
+import { newId } from "./model.js";
 
 const $ = (id) => document.getElementById(id);
 const demo = new URLSearchParams(location.search).has("demo");
@@ -107,7 +109,7 @@ function render() {
       <div class="kpi"><span class="k-label">Upstairs</span><span class="k-value">${money(T.upstairs)}</span>
         <span class="k-note">${Math.round(T.upstairsShare * 100)}% of collected</span></div>
       <div class="kpi"><span class="k-label">Coupons and voids</span><span class="k-value">${T.coupons} · ${T.voids}</span>
-        <span class="k-note">${T.coupons} half-hour coupons (${money(T.couponCents)}) · ${T.voids} voided</span></div>
+        <span class="k-note">${T.coupons} half-hour coupons (${money(T.couponCents)}) · ${T.voids} voided (${moneyExact(T.voidedCents)} not charged)</span></div>
     </section>
 
     <section class="charts">
@@ -134,13 +136,13 @@ function nightsTable(cur, T) {
   const rows = [...cur].filter((n) => n.games || n.seated || n.left).reverse().map((n) => `<tr>
     <td>${fmtNight(n.date)}</td><td>${moneyExact(n.collected)}</td><td>${n.games}</td><td>${(n.ms / 3_600_000).toFixed(1)}</td>
     <td>${moneyExact(n.byFloor.downstairs)}</td><td>${n.byFloor.upstairs ? moneyExact(n.byFloor.upstairs) : "—"}</td>
-    <td>${n.coupons ? `${n.coupons} · ${moneyExact(n.couponCents)}` : "—"}</td><td>${n.voids || "—"}</td>
+    <td>${n.coupons ? `${n.coupons} · ${moneyExact(n.couponCents)}` : "—"}</td><td>${n.voids ? `${n.voids} · ${moneyExact(n.voidedCents)}` : "—"}</td>
     <td>${n.seated ? shortDur(n.waitMs / n.seated) : "—"}</td><td>${n.left || "—"}</td></tr>`).join("");
   return `<table class="nights-table">
     <thead><tr><th>Night</th><th>Collected</th><th>Games</th><th>Hours</th><th>Downstairs</th><th>Upstairs</th><th>Coupons</th><th>Voids</th><th>Avg wait</th><th>Gave up</th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td>Total</td><td>${moneyExact(T.collected)}</td><td>${T.games}</td><td>${(T.ms / 3_600_000).toFixed(1)}</td>
-      <td>${moneyExact(T.downstairs)}</td><td>${moneyExact(T.upstairs)}</td><td>${T.coupons} · ${moneyExact(T.couponCents)}</td><td>${T.voids}</td>
+      <td>${moneyExact(T.downstairs)}</td><td>${moneyExact(T.upstairs)}</td><td>${T.coupons} · ${moneyExact(T.couponCents)}</td><td>${T.voids} · ${moneyExact(T.voidedCents)}</td>
       <td>${T.seated ? shortDur(T.avgWaitMs) : "—"}</td><td>${T.left}</td></tr></tfoot></table>`;
 }
 
@@ -324,10 +326,10 @@ $("exportBtn").addEventListener("click", () => {
   const now = Date.now();
   const cur = inRange(nightSummaries(allState, now), periodRange(period, now)).filter((n) => n.games || n.seated || n.left);
   const head = ["Night", "Day", "Collected ($)", "Games", "Hours played", "Downstairs ($)", "Upstairs ($)", "Coupons used", "Coupons ($)",
-    "Voided", "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Gave up"];
+    "Voided", "Voided ($)", "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Gave up"];
   const rows = cur.map((n) => [nightKey(n.date), WD_LONG[n.weekday].slice(0, -1), (n.collected / 100).toFixed(2), n.games,
     (n.ms / 3_600_000).toFixed(2), (n.byFloor.downstairs / 100).toFixed(2), (n.byFloor.upstairs / 100).toFixed(2), n.coupons,
-    (n.couponCents / 100).toFixed(2), n.voids, n.seated, n.seated ? (n.waitMs / n.seated / 60000).toFixed(1) : "",
+    (n.couponCents / 100).toFixed(2), n.voids, (n.voidedCents / 100).toFixed(2), n.seated, n.seated ? (n.waitMs / n.seated / 60000).toFixed(1) : "",
     n.seated ? (n.longestMs / 60000).toFixed(1) : "", n.left]);
   const csv = "﻿" + [head, ...rows].map((r) => r.join(",")).join("\r\n") + "\r\n";
   offerFile(`pool-hall-report-${period}-${nightKey(new Date())}.csv`, csv, "text/csv").catch((e) => toast(e.message, true));
@@ -382,6 +384,67 @@ $("loginForm").addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- Manager PINs ----------
+// Adding or removing a manager needs an existing manager's PIN (except the
+// very first one). Removing the last manager isn't allowed, so voids can
+// always be approved.
+
+function renderManagers() {
+  if (!store) return;
+  const managers = store.get().managers ?? {};
+  const any = hasManagers(managers);
+  $("managers").hidden = false;
+  $("approveLabel").hidden = !any;
+  $("approvePin").hidden = !any;
+  $("mgrList").innerHTML = any
+    ? Object.entries(managers).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, m]) => `<li>
+        <span><b>${esc(m.name)}</b> <span class="muted">added ${new Date(m.addedAt).toLocaleDateString()}</span></span>
+        <button class="btn small" type="button" data-remove="${id}">Remove</button></li>`).join("")
+    : `<li class="muted">No managers yet. Add the first one below (no approval needed for the first).</li>`;
+}
+
+$("mgrForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = $("mgrError");
+  err.textContent = "";
+  try {
+    const managers = store.get().managers ?? {};
+    if (hasManagers(managers) && !(await findManager(managers, $("approvePin").value))) {
+      throw new Error("The approving PIN isn't right.");
+    }
+    if (await findManager(managers, $("newMgrPin").value)) throw new Error("Someone already has that PIN. Choose another.");
+    const record = await makeManager($("newMgrName").value, $("newMgrPin").value);
+    store.addManager(newId(), record);
+    for (const id of ["newMgrName", "newMgrPin", "approvePin"]) $(id).value = "";
+    toast(`${record.name} added as a manager`);
+  } catch (ex) {
+    err.textContent = ex.message;
+  }
+});
+
+$("mgrList").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-remove]");
+  if (!b) return;
+  const id = b.dataset.remove;
+  const managers = store.get().managers ?? {};
+  if (Object.keys(managers).length <= 1) return toast("Add another manager before removing the last one", true);
+  const li = b.closest("li");
+  if (li.querySelector(".remove-confirm")) return;
+  li.insertAdjacentHTML("beforeend", `<form class="remove-confirm">
+    <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Another manager's PIN" aria-label="Approving PIN">
+    <button class="btn small danger" type="submit">Confirm removal</button></form>`);
+  const form = li.querySelector(".remove-confirm");
+  form.querySelector("input").focus();
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const approver = await findManager(managers, form.querySelector("input").value);
+    if (!approver || approver.id === id) return toast("Needs a different manager's PIN", true);
+    const name = managers[id].name;
+    store.removeManager(id);
+    toast(`${name} removed`);
+  });
+});
+
 renderPeriods();
 if (demo) {
   $("demoBanner").hidden = false;
@@ -394,6 +457,9 @@ if (demo) {
     },
     onError: (msg) => toast(msg, true),
   });
-  store.subscribe(renderTonight);
+  store.subscribe(() => {
+    renderTonight();
+    if (!document.querySelector(".remove-confirm")) renderManagers();
+  });
   setInterval(renderTonight, 30_000);
 }

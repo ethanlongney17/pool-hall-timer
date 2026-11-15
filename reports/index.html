@@ -32,6 +32,25 @@
   <p class="r-loading">Loading every night from the cloud…</p>
 </main>
 
+<section class="r-main managers" id="managers" hidden aria-labelledby="mgrTitle">
+  <div class="nights-card">
+    <h2 id="mgrTitle">Manager PINs</h2>
+    <p class="r-foot">A manager's PIN is needed to void a game on the iPads, and the void records who approved it. PINs are stored scrambled, so nobody can read them back.</p>
+    <ul class="mgr-list" id="mgrList"></ul>
+    <form class="mgr-form" id="mgrForm" autocomplete="off">
+      <h3>Add a manager</h3>
+      <label for="newMgrName">Name</label>
+      <input id="newMgrName" maxlength="30" placeholder="e.g. Mike">
+      <label for="newMgrPin">Their new PIN (4–8 digits)</label>
+      <input id="newMgrPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8">
+      <label for="approvePin" id="approveLabel">An existing manager's PIN, to approve</label>
+      <input id="approvePin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8">
+      <div class="login-error" id="mgrError" role="alert"></div>
+      <button class="btn primary" type="submit">Add manager</button>
+    </form>
+  </div>
+</section>
+
 <div class="chart-tip" id="tip" role="status" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="../src/reports.js"></script>

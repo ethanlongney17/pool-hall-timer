@@ -65,7 +65,7 @@ test("Totals and exports split by floor", () => {
   const nights = nightsCsv(s, { now: at(13, 22) }).replace(/^﻿/, "").trim().split(/\r\n/).map((r) => r.split(","));
   eq(nights[1][10], "Both");
   eq(nights[1][7], "37.50");
-  eq(nights[1].slice(15).join("|"), "25.00|12.50");
+  eq(nights[1].slice(15, 17).join("|"), "25.00|12.50");
 });
 
 // --- Sync logic ---------------------------------------------------------------------

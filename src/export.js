@@ -2,7 +2,7 @@
 // Everything here runs on the device: no internet needed.
 
 import { businessDateOf } from "./billing/pricing.js";
-import { sessionCharge, pausedMs, waitStats } from "./model.js";
+import { sessionCharge, pausedMs, waitStats, voidedValueCents } from "./model.js";
 import { floorOf, FLOORS } from "./halls.js";
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -36,7 +36,7 @@ const csvRow = (cells) => cells.map(csvCell).join(",");
 
 export const CSV_HEADER = [
   "Night", "Day", "Table", "Customer", "Started", "Stopped", "Time played", "Minutes", "Rate",
-  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)", "Floor", "Rounding ($)",
+  "Full charge ($)", "Coupon ($)", "Charged ($)", "Status", "Paused (not charged)", "Floor", "Rounding ($)", "Voided value ($)",
 ];
 
 /**
@@ -51,16 +51,19 @@ export function sessionsCsv(state, { night, now }) {
     .filter((s) => key == null || businessDateOf(s.start).getTime() === key)
     .sort((a, b) => a.start - b.start);
 
-  const totals = { full: 0, coupon: 0, charged: 0, rounding: 0 };
+  const totals = { full: 0, coupon: 0, charged: 0, rounding: 0, voided: 0 };
   const rows = sessions.map((s) => {
     const bd = businessDateOf(s.start);
     const running = s.end == null && !s.voidedAt;
     const c = sessionCharge(s, now);
     const rates = [...new Set(c.price.segments.map((seg) => `$${seg.centsPerHour / 100}/hr`))].join(" + ");
-    let status = s.voidedAt ? `Void${s.voidReason ? ": " + s.voidReason : ""}` : running ? "Still running" : "Closed";
+    let status = s.voidedAt
+      ? `Void${s.voidReason ? ": " + s.voidReason : ""}${s.voidApprovedBy ? ` (approved by ${s.voidApprovedBy})` : ""}`
+      : running ? "Still running" : "Closed";
     if (s.discount && !s.voidedAt) status += ` (${s.discount.label})`;
     const full = s.voidedAt ? 0 : c.fullCents;
     const coupon = s.voidedAt ? 0 : c.discountCents;
+    totals.voided += voidedValueCents(s);
     if (!s.voidedAt && !running) {
       totals.full += full;
       totals.coupon += coupon;
@@ -70,14 +73,14 @@ export function sessionsCsv(state, { night, now }) {
     return csvRow([
       ymd(bd), WEEKDAYS[bd.getDay()], tableName(s.tableId), s.name, dateTime(s.start),
       running ? "" : dateTime(s.end), hms(c.price.ms), (c.price.ms / 60000).toFixed(1), rates,
-      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floorName(state, s.tableId), dollars(c.roundingCents),
+      dollars(full), dollars(coupon), dollars(c.chargedCents), status, pausedMs(s, now) >= 1000 ? hms(pausedMs(s, now)) : "", floorName(state, s.tableId), dollars(c.roundingCents), s.voidedAt ? dollars(voidedValueCents(s)) : "",
     ]);
   });
 
   const lines = [csvRow(CSV_HEADER), ...rows];
   if (night) {
     lines.push("", csvRow(["Total (closed tables)", "", "", "", "", "", "", "", "",
-      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floorsLabel(state, sessions), dollars(totals.rounding)]));
+      dollars(totals.full), dollars(totals.coupon), dollars(totals.charged), "", "", floorsLabel(state, sessions), dollars(totals.rounding), dollars(totals.voided)]));
   }
   // The byte-order mark makes Excel read the file as UTF-8; Numbers ignores it.
   return "﻿" + lines.join("\r\n") + "\r\n";
@@ -87,7 +90,7 @@ export const NIGHTS_HEADER = [
   "Night", "Day", "Tables played", "Hours played", "Full charges ($)", "Coupons used", "Coupons ($)",
   "Collected ($)", "Voided", "Still running", "Floor",
   "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Left waitlist",
-  "Downstairs collected ($)", "Upstairs collected ($)",
+  "Downstairs collected ($)", "Upstairs collected ($)", "Voided ($)",
 ];
 
 /** One row per night: the figures to check against the POS. Oldest night first. */
@@ -96,14 +99,14 @@ export function nightsCsv(state, { now }) {
   const nightOf = (t) => {
     const bd = businessDateOf(t);
     const k = bd.getTime();
-    if (!nights.has(k)) nights.set(k, { bd, played: 0, ms: 0, full: 0, coupons: 0, coupon: 0, charged: 0, voided: 0, running: 0, games: [], byFloor: { Downstairs: 0, Upstairs: 0 } });
+    if (!nights.has(k)) nights.set(k, { bd, played: 0, ms: 0, full: 0, coupons: 0, coupon: 0, charged: 0, voided: 0, running: 0, games: [], byFloor: { Downstairs: 0, Upstairs: 0 }, voidedCents: 0 });
     return nights.get(k);
   };
   for (const w of state.waitHistory ?? []) nightOf(w.addedAt); // nights with waits but no games still get a row
   for (const s of state.sessions) {
     const n = nightOf(s.start);
     n.games.push(s);
-    if (s.voidedAt) { n.voided++; continue; }
+    if (s.voidedAt) { n.voided++; n.voidedCents += voidedValueCents(s); continue; }
     if (s.end == null) { n.running++; continue; }
     const c = sessionCharge(s, now);
     n.played++;
@@ -123,7 +126,7 @@ export function nightsCsv(state, { now }) {
         ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
         dollars(n.coupon), dollars(n.charged), n.voided, n.running, floorsLabel(state, n.games),
         w.seatedCount, mins(w.averageMs), mins(w.longestMs), w.leftCount,
-        dollars(n.byFloor.Downstairs), dollars(n.byFloor.Upstairs),
+        dollars(n.byFloor.Downstairs), dollars(n.byFloor.Upstairs), dollars(n.voidedCents),
       ]);
     });
   return "﻿" + [csvRow(NIGHTS_HEADER), ...rows].join("\r\n") + "\r\n";

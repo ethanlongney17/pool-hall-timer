@@ -4,7 +4,7 @@
 // A "night" is the 6am-to-6am business day used everywhere else.
 
 import { businessDateOf } from "./billing/pricing.js";
-import { sessionCharge, playedIntervals } from "./model.js";
+import { sessionCharge, playedIntervals, voidedValueCents } from "./model.js";
 import { floorOf } from "./halls.js";
 
 const DAY = 86_400_000;
@@ -15,7 +15,7 @@ export const nightKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pa
 function emptyNight(date) {
   return {
     date, key: nightKey(date), weekday: date.getDay(),
-    collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, games: 0, ms: 0,
+    collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, voidedCents: 0, games: 0, ms: 0,
     byFloor: { downstairs: 0, upstairs: 0 },
     seated: 0, left: 0, waitMs: 0, longestMs: 0,
     tableMsByHour: new Array(24).fill(0), // table-time played in each clock hour
@@ -33,7 +33,7 @@ export function nightSummaries(state, now) {
   };
   for (const s of state.sessions) {
     const n = nightOf(s.start);
-    if (s.voidedAt) { n.voids++; continue; }
+    if (s.voidedAt) { n.voids++; n.voidedCents += voidedValueCents(s); continue; }
     if (s.end == null) continue; // still running: counted once it closes
     const c = sessionCharge(s, now);
     n.games++;
@@ -122,11 +122,11 @@ export const inRange = (nights, r) => (r ? nights.filter((n) => n.date >= r.from
 export function totals(nights) {
   const t = {
     nights: nights.filter((n) => n.games).length,
-    collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, games: 0, ms: 0,
+    collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, voidedCents: 0, games: 0, ms: 0,
     upstairs: 0, downstairs: 0, seated: 0, left: 0, waitMs: 0, longestMs: 0,
   };
   for (const n of nights) {
-    for (const k of ["collected", "full", "couponCents", "coupons", "voids", "games", "ms", "seated", "left", "waitMs"]) t[k] += n[k];
+    for (const k of ["collected", "full", "couponCents", "coupons", "voids", "voidedCents", "games", "ms", "seated", "left", "waitMs"]) t[k] += n[k];
     t.upstairs += n.byFloor.upstairs;
     t.downstairs += n.byFloor.downstairs;
     t.longestMs = Math.max(t.longestMs, n.longestMs);

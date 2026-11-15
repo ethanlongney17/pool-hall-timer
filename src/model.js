@@ -166,6 +166,16 @@ export function sessionCharge(s, now) {
   return { price, fullCents, discountCents, roundingCents: s.voidedAt ? 0 : chargedCents - exact, chargedCents };
 }
 
+/**
+ * What a voided game would have cost (up to when it was voided): the amount
+ * written off. 0 for games that aren't voided.
+ */
+export function voidedValueCents(s) {
+  if (!s.voidedAt) return 0;
+  const { voidedAt, ...asIfNot } = s;
+  return sessionCharge(asIfNot, s.end ?? voidedAt).chargedCents;
+}
+
 /** Round a charge to the nearest ROUND_TO_CENTS (a quarter). */
 export function roundCharge(cents, step = ROUND_TO_CENTS) {
   return Math.round(cents / step) * step;
@@ -210,6 +220,7 @@ export function daySummary(state, businessDate, now) {
     fullTotalCents: sum(closed, "fullCents"), // before coupons
     couponCents: sum(closed, "discountCents"),
     couponCount: coupons.length,
+    voidedCents: voided.reduce((a, s) => a + voidedValueCents(s), 0), // written off by voids
     openRunningCents: sum(open, "chargedCents"),
     totalMs: closed.reduce((a, s) => a + s.price.ms, 0),
   };
@@ -310,13 +321,30 @@ export function renameSession(state, { sessionId, name, now }) {
 }
 
 /** For a table opened by mistake. Kept in the records (marked void), not deleted. */
-export function voidSession(state, { sessionId, reason = "", now }) {
+/**
+ * No charge for this game: opened by mistake, or comped after it closed.
+ * Kept in the records as voided. `approvedBy` is the manager who okayed it.
+ */
+export function voidSession(state, { sessionId, reason = "", approvedBy = "", now }) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s || s.voidedAt) throw new Error("Session not found");
+  const voided = { ...s, end: s.end ?? now, voidedAt: now, voidReason: reason.trim(), wasRunning: s.end == null };
+  if (approvedBy) voided.voidApprovedBy = approvedBy;
   return replaceSession(
     state,
-    withLog({ ...s, end: s.end ?? now, voidedAt: now, voidReason: reason.trim() }, { at: now, what: "voided" }),
+    withLog(voided, { at: now, what: approvedBy ? `voided (approved by ${approvedBy})` : "voided" }),
   );
+}
+
+/** Undo a void: the game counts again, and a running one keeps running. */
+export function unvoidSession(state, { sessionId, now }) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s?.voidedAt) throw new Error("That game isn't voided");
+  if (s.wasRunning && activeSession(state, s.tableId)) {
+    throw new Error(`${tableName(state, s.tableId)} has been started again since; can't undo`);
+  }
+  const { voidedAt, voidReason, voidApprovedBy, wasRunning, ...rest } = s;
+  return replaceSession(state, withLog({ ...rest, end: wasRunning ? null : s.end }, { at: now, what: "void undone" }));
 }
 
 export function waitlistAdd(state, { name, note = "", now, id = newId() }) {
@@ -456,6 +484,7 @@ export const actions = {
   waitlistRestore,
   seatFromWaitlist,
   applyDiscount,
+  unvoidSession,
   markTableReady,
   ackTableReady,
   pauseTable,

@@ -234,3 +234,6 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .table-card.reserved { background: #1d2333; border-color: #7b8db8; border-style: dashed; }
 .table-card.reserved .t-who { color: #c6d2f0; font-weight: 600; min-height: 1.4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-card.reserved .t-state { color: #c6d2f0; font-weight: 700; margin-top: auto; }
+
+/* Void (needs a manager PIN) */
+.btn.void-btn { background: transparent; border-color: var(--danger); color: #ff9b9e; }
