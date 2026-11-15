@@ -12,7 +12,7 @@ import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache, terminate,
   collection, doc, onSnapshot, query, where, writeBatch, getDocs, getDocsFromCache, setDoc, deleteField,
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "../firebase-config.js";
@@ -37,11 +37,19 @@ const FRIENDLY = {
 };
 export const friendlyError = (e) => FRIENDLY[e?.code] ?? e?.message ?? String(e);
 
-export function createCloudStore({ onAuthChange, onError }) {
+/**
+ * memoryCache: keep the cloud copy in memory only (the Reports page). The
+ * staff apps keep a copy on the device so they work offline; Reports only
+ * reads, and iPad Safari can leave the device database locked when an
+ * installed app moves between pages, which made Reports hang on the iPad.
+ */
+export function createCloudStore({ onAuthChange, onError, memoryCache = false }) {
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    localCache: memoryCache
+      ? memoryLocalCache()
+      : persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   });
 
   const recentFrom = Date.now() - RECENT_DAYS * DAY;
@@ -145,6 +153,16 @@ export function createCloudStore({ onAuthChange, onError }) {
       return state;
     },
 
+    /**
+     * Close the database connection before leaving for another page of the
+     * app, so the next page isn't left waiting on it (iPad Safari).
+     * Never waits more than 1.5 seconds.
+     */
+    shutdown() {
+      stop();
+      return Promise.race([terminate(db).catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+    },
+
     // --- Sign-in ---
     user: () => user,
     signIn: (email, password) => signInWithEmailAndPassword(auth, email.trim(), password),
@@ -232,7 +250,7 @@ export function createCloudStore({ onAuthChange, onError }) {
       const MARK = "poolhall.reports.fullLoadAt";
       let lastFull = 0;
       try { lastFull = Number(localStorage.getItem(MARK)) || 0; } catch {}
-      const useCache = !full && lastFull > 0 && Date.now() - lastFull < 7 * DAY;
+      const useCache = !memoryCache && !full && lastFull > 0 && Date.now() - lastFull < 7 * DAY;
       const all = {};
       for (const [col, field] of [["sessions", "start"], ["waitHistory", "addedAt"]]) {
         let cached = [];
@@ -250,7 +268,7 @@ export function createCloudStore({ onAuthChange, onError }) {
         all[col] = [...byId.values()];
       }
       historyCache.set(0, all);
-      if (!useCache) {
+      if (!useCache && !memoryCache) {
         try { localStorage.setItem(MARK, String(Date.now())); } catch {}
       }
       return withExtra(state, all);

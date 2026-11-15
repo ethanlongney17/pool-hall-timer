@@ -349,6 +349,8 @@ async function load(full = false) {
     return;
   }
   $("refreshBtn").disabled = true;
+  if (!allState) showStep("Loading every night from the cloud…");
+  const loadTimer = setTimeout(() => !allState && showStuck("loading the records from the cloud"), 25_000);
   try {
     allState = await store.loadAll({ full });
     render();
@@ -359,9 +361,33 @@ async function load(full = false) {
       $("report").innerHTML = `<p class="r-empty">Couldn't load the records: ${esc(msg)} Check the connection, then tap Refresh.</p>`;
     }
   } finally {
+    clearTimeout(loadTimer);
     $("refreshBtn").disabled = false;
   }
 }
+
+// What the page is doing while it loads, and a clear message if a step takes
+// too long, so a problem on one device can be pinned down.
+function showStep(text) {
+  if (!allState) $("report").innerHTML = `<p class="r-loading">${esc(text)}</p>`;
+}
+function showStuck(step) {
+  if (allState) return;
+  $("report").innerHTML = `<div class="r-note">
+    <p><b>This is taking too long.</b> The page got stuck ${esc(step)}.</p>
+    <p>Check the Wi-Fi, then tap Try again. If it keeps happening on this iPad, open the reports in Safari instead:
+      <b>ethanlongney17.github.io/pool-hall-timer/reports/</b></p>
+    <p><button class="btn primary" type="button" id="retryBtn">Try again</button></p></div>`;
+  $("retryBtn").addEventListener("click", () => location.reload());
+}
+
+// Leaving for the staff app: close the database first (see main.js).
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-leave]");
+  if (!a) return;
+  e.preventDefault();
+  (store ? store.shutdown() : Promise.resolve()).finally(() => (location.href = a.href));
+});
 // Refresh fetches everything again, so it also fixes anything a device missed.
 $("refreshBtn").addEventListener("click", () => load(true));
 
@@ -461,10 +487,15 @@ if (demo) {
   $("demoBanner").hidden = false;
   load();
 } else {
+  showStep("Checking this device's sign-in…");
+  const authTimer = setTimeout(() => showStuck("checking this device's sign-in"), 20_000);
   store = createCloudStore({
+    memoryCache: true,
     onAuthChange: (user) => {
+      clearTimeout(authTimer);
       login.hidden = !!user;
       if (user) load();
+      else showStep("Sign in to see the records.");
     },
     onError: (msg) => toast(msg, true),
   });

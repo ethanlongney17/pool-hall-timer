@@ -8,7 +8,7 @@ import { makeManager, findManager, hasManagers } from "./pin.js";
 import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "18 (cloud)";
+export const APP_VERSION = "19 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -714,7 +714,7 @@ function showToday(dayOffset = 0) {
             <button class="btn" data-act="restore">Upload a backup file…</button>
           </div>
         </div>
-        <a class="btn link" href="${new URL("../reports/", import.meta.url)}">Owners' reports: every night, trends and comparisons ↗</a>
+        <a class="btn link" data-leave href="${new URL("../reports/", import.meta.url)}">Owners' reports: every night, trends and comparisons ↗</a>
         <button class="btn link" data-act="signout">Sign this device out</button>
       </div>`;
     },
@@ -858,6 +858,15 @@ $("waitList").addEventListener("click", (e) => {
 });
 
 $("todayBtn").addEventListener("click", () => run(() => showToday(0)));
+
+// Going to another page of the app (Reports): close the database first, so
+// the next page isn't left waiting on it (iPad Safari keeps it locked otherwise).
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-leave]");
+  if (!a) return;
+  e.preventDefault();
+  store.shutdown().finally(() => (location.href = a.href));
+});
 
 // ---------- Upstairs open / closed (shared by every device) ----------
 
