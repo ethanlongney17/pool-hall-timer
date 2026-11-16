@@ -261,3 +261,66 @@ export function sampleState(now, tables) {
   }
   return { sessions, waitHistory };
 }
+
+// ---------- Monthly report ----------
+
+/**
+ * Everything for one calendar month's report. `year`, `month` (0-11).
+ * Compares with the month before; for a month still in progress, compares
+ * with the same number of days of the month before.
+ */
+export function monthReport(nights, year, month, now) {
+  const from = new Date(year, month, 1);
+  const to = new Date(year, month + 1, 1);
+  const today = businessDateOf(now);
+  const inProgress = today >= from && today < to;
+  const through = inProgress ? new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1) : to;
+  const days = Math.round((through - from) / DAY);
+  const prevFrom = new Date(year, month - 1, 1);
+  const prevTo = inProgress ? new Date(year, month - 1, 1 + days) : from;
+
+  const cur = inRange(nights, { from, to: through });
+  const prev = inRange(nights, { from: prevFrom, to: prevTo });
+  const played = cur.filter((n) => n.games);
+  const best = played.reduce((b, n) => (!b || n.collected > b.collected ? n : b), null);
+  const quietest = played.reduce((b, n) => (!b || n.collected < b.collected ? n : b), null);
+  const weekdays = byWeekday(cur);
+  const bestWeekday = weekdays.filter((w) => w.nights).sort((a, b) => b.avg - a.avg)[0] ?? null;
+
+  // Weeks starting Monday, clipped to the month.
+  const weeks = new Map();
+  for (const n of cur) {
+    const back = (n.date.getDay() + 6) % 7;
+    const monday = new Date(n.date.getFullYear(), n.date.getMonth(), n.date.getDate() - back);
+    const start = monday < from ? from : monday;
+    const k = start.getTime();
+    if (!weeks.has(k)) weeks.set(k, { start, nights: [] });
+    weeks.get(k).nights.push(n);
+  }
+  const weekRows = [...weeks.values()].sort((a, b) => a.start - b.start).map((w) => {
+    const last = w.nights[w.nights.length - 1].date;
+    const sunday = new Date(w.start.getFullYear(), w.start.getMonth(), w.start.getDate() + ((7 - w.start.getDay()) % 7));
+    return { start: w.start, end: sunday < to ? sunday : new Date(to - DAY), lastNight: last, ...totals(w.nights) };
+  });
+
+  return {
+    from, to, through, inProgress,
+    totals: totals(cur),
+    prev: prev.some((n) => n.games) ? totals(prev) : null,
+    upstairsNights: cur.filter((n) => n.byFloor.upstairs > 0).length,
+    best, quietest, bestWeekday, weeks: weekRows,
+    nights: cur.filter((n) => n.games || n.seated || n.left || n.peakWait.count),
+    firstRecorded: nights.find((n) => n.games)?.date ?? null,
+  };
+}
+
+/** Months that have any recorded nights, newest first: [{ year, month }]. */
+export function monthsWithData(nights) {
+  const seen = new Map();
+  for (const n of nights) {
+    if (!n.games) continue;
+    const k = n.date.getFullYear() * 12 + n.date.getMonth();
+    seen.set(k, { year: n.date.getFullYear(), month: n.date.getMonth() });
+  }
+  return [...seen.entries()].sort((a, b) => b[0] - a[0]).map(([, v]) => v);
+}

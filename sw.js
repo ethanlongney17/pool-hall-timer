@@ -2,7 +2,7 @@
 // Network first (so updates arrive as soon as they're published), falling
 // back to the last cached copy when offline.
 
-const CACHE = "pool-hall-v20";
+const CACHE = "pool-hall-v21";
 const SHELL = [
   "./",
   "index.html",
@@ -18,6 +18,9 @@ const SHELL = [
   "reports.css",
   "src/reports.js",
   "src/reports-data.js",
+  "reports/month/",
+  "reports/month/index.html",
+  "src/month-report.js",
   "src/firebase-config.js",
   "src/store/cloud-store.js",
   "src/store/sync-core.js",

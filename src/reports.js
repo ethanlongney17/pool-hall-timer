@@ -38,7 +38,7 @@ function monthsCard(cur) {
   const months = byMonth(cur.filter((n) => n.games || n.seated || n.left || n.peakWait.count));
   if (!months.length) return "";
   const rows = [...months].reverse().map((m) => `<tr>
-    <td>${m.month.toLocaleDateString([], { month: "long", year: "numeric" })}</td><td>${moneyExact(m.collected)}</td><td>${m.nights}</td>
+    <td><a data-leave href="month/?m=${m.month.getFullYear()}-${String(m.month.getMonth() + 1).padStart(2, "0")}">${m.month.toLocaleDateString([], { month: "long", year: "numeric" })} ↗</a></td><td>${moneyExact(m.collected)}</td><td>${m.nights}</td>
     <td>${moneyExact(m.perNight)}</td><td>${m.games}</td><td>${m.seated ? shortDur(m.avgWaitMs) : "—"}</td>
     <td>${m.peakWait.count ? `${m.peakWait.count} <span class="muted">${fmtShort(m.peakWait.date)}</span>` : "—"}</td></tr>`).join("");
   return `<section class="nights-card">

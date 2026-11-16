@@ -188,3 +188,41 @@ test("Nightly export has the peak waitlist and when", () => {
   eq(rows[0].slice(18).join("|"), "Peak waitlist|Peak at");
   eq(rows[1].slice(18).join("|"), "2|8:45 PM");
 });
+
+// --- Monthly report ----------------------------------------------------------------
+
+test("Monthly report: totals, best and quietest night, compared with last month", async () => {
+  const { monthReport, monthsWithData } = await import("../src/reports-data.js");
+  let s = building();
+  s = play(s, "t1", new Date(2026, 9, 9, 20).getTime(), new Date(2026, 9, 9, 22).getTime(), "o1"); // Fri Oct 9: 2h @ $25 = $50
+  s = play(s, "t1", at(6, 20), at(6, 21), "n1"); // Fri Nov 6: $25
+  s = play(s, "t2", at(13, 20), at(13, 23), "n2"); // Fri Nov 13: $75
+  s = play(s, "u1", at(13, 20), at(13, 21), "n3"); // upstairs $25
+  s = play(s, "t3", at(10, 14), at(10, 15), "n4"); // Tue Nov 10 afternoon: $15
+  const nights = nightSummaries(s, new Date(2026, 11, 2).getTime());
+  const r = monthReport(nights, 2026, 10, new Date(2026, 11, 2).getTime()); // November, finished
+  eq(r.inProgress, false);
+  eq(r.totals.collected, 2500 + 7500 + 2500 + 1500);
+  eq(r.totals.nights, 3);
+  eq(r.best.date.getDate(), 13);
+  eq(r.quietest.date.getDate(), 10);
+  eq(r.prev.collected, 5000, "October: ");
+  eq(r.upstairsNights, 1);
+  eq(r.bestWeekday.weekday, 5, "Fridays: ");
+  eq(r.weeks.length, 2, "weeks of Nov 2 and Nov 9: ");
+  eq(r.weeks[1].collected, 1500 + 10000);
+  const ms = monthsWithData(nights);
+  eq(ms.map((m) => `${m.year}-${m.month}`).join(), "2026-10,2026-9");
+});
+
+test("A month in progress compares with the same days of last month", async () => {
+  const { monthReport } = await import("../src/reports-data.js");
+  let s = building();
+  s = play(s, "t1", new Date(2026, 9, 3, 20).getTime(), new Date(2026, 9, 3, 21).getTime(), "a"); // Oct 3: inside first 14 days
+  s = play(s, "t1", new Date(2026, 9, 20, 20).getTime(), new Date(2026, 9, 20, 21).getTime(), "b"); // Oct 20: outside
+  s = play(s, "t2", at(13, 20), at(13, 21), "c"); // Nov 13
+  const now = at(14, 12); // Sat Nov 14: 14 days into November
+  const r = monthReport(nightSummaries(s, now), 2026, 10, now);
+  eq(r.inProgress, true);
+  eq(r.prev.collected, nightSummaries(s, now).find((n) => n.date.getDate() === 3).collected, "only Oct 1-14: ");
+});

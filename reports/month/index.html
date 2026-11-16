@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-hall="reports">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monthly Report</title>
+<meta name="theme-color" content="#0d141b">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="icon" href="../../icons/icon-192.png">
+<link rel="stylesheet" href="../../app.css">
+<link rel="stylesheet" href="../../reports.css">
+</head>
+<body class="month-report">
+<div class="mr-bar no-print">
+  <a class="btn ghost" data-leave href="../">← All reports</a>
+  <div class="mr-nav">
+    <button class="btn ghost" id="prevMonth" type="button">◀</button>
+    <select id="monthPick" aria-label="Month"></select>
+    <button class="btn ghost" id="nextMonth" type="button">▶</button>
+  </div>
+  <div class="mr-actions">
+    <button class="btn ghost" id="csvBtn" type="button">Spreadsheet</button>
+    <button class="btn primary" id="printBtn" type="button">Print / save PDF</button>
+  </div>
+</div>
+
+<main class="paper" id="paper">
+  <p class="mr-status">Loading the month from the cloud…</p>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="../../src/month-report.js"></script>
+<script>
+  setTimeout(function () {
+    if (window.__monthReady) return;
+    var p = document.getElementById("paper");
+    if (p) p.innerHTML = '<p class="mr-status">The report didn\'t finish loading. Make sure you\'re online, then close the page and open it again.</p>';
+  }, 15000);
+</script>
+</body>
+</html>
