@@ -1,4 +1,5 @@
 import { createCloudStore } from "./store/cloud-store.js";
+import { createDemoStore, DEMO_PIN } from "./store/demo-store.js";
 import { currentHall, floorsShown, floorsInPlay, onlyFloors, floorOf, FLOORS } from "./halls.js";
 import { activeSession, daySummary, sessionCharge, couponRate, isPaused, pausedMs, waitEstimates, waitStats, tableStatus, readyAlerts, activeReservation, recentWaitMs } from "./model.js";
 import { rateAt, businessDateOf, formatCents, formatDuration } from "./billing/pricing.js";
@@ -8,10 +9,16 @@ import { makeManager, findManager, hasManagers } from "./pin.js";
 import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "22 (cloud)";
+export const APP_VERSION = "23 (cloud)";
 
 const hall = currentHall();
-const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
+// Practice mode (?demo): same app on a made-up night, kept in this browser
+// only, so it can be tried out without touching the real records.
+const DEMO = new URLSearchParams(location.search).has("demo");
+const store = DEMO
+  ? createDemoStore()
+  : createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
+const withDemo = (url) => (DEMO ? `${url}${url.includes("?") ? "&" : "?"}demo` : url);
 
 // What this app shows: downstairs shows upstairs too when it's open; the
 // upstairs app shows only upstairs. Totals in the downstairs app cover the
@@ -286,6 +293,7 @@ const SYNC_TEXT = {
   offline: ["sync offline", "● Offline: saved here, will sync"],
   connecting: ["sync offline", "● Connecting…"],
   "signed-out": ["sync offline", "Not signed in"],
+  demo: ["sync live", "● Practice mode: nothing here is saved to the real records"],
   denied: ["sync denied", "✕ NOT SAVING: the cloud refused access (check the database rules)"],
 };
 
@@ -714,7 +722,7 @@ function showToday(dayOffset = 0) {
             <button class="btn" data-act="restore">Upload a backup file…</button>
           </div>
         </div>
-        <a class="btn link" data-leave href="${new URL("../reports/", import.meta.url)}">Owners' reports: every night, trends and comparisons ↗</a>
+        <a class="btn link" data-leave href="${withDemo(new URL("../reports/", import.meta.url).href)}">Owners' reports: every night, trends and comparisons ↗</a>
         <button class="btn link" data-act="signout">Sign this device out</button>
       </div>`;
     },
@@ -971,6 +979,20 @@ function moveLocalDataToCloud() {
     });
   };
   attempt();
+}
+
+if (DEMO) {
+  const bar = document.createElement("div");
+  bar.className = "demo-bar";
+  bar.innerHTML = `<b>PRACTICE MODE</b> <span>Made-up night: nothing is saved to the real records. Manager PIN for voids: <b>${DEMO_PIN}</b></span>
+    <button class="btn small" type="button" id="demoReset">Start the night over</button>
+    <a class="btn small" href="${new URL(".", location.href).pathname}">Leave practice mode</a>`;
+  document.body.prepend(bar);
+  $("demoReset").addEventListener("click", () => {
+    store.reset();
+    closeSheet();
+    toast("Practice night started over");
+  });
 }
 
 store.subscribe(renderAll);

@@ -3,7 +3,9 @@
 // Reads the same cloud records as Reports; changes nothing.
 
 import { createCloudStore, friendlyError } from "./store/cloud-store.js";
-import { nightSummaries, monthReport, monthsWithData, change } from "./reports-data.js";
+import { nightSummaries, monthReport, monthsWithData, change, sampleState } from "./reports-data.js";
+import { createDemoStore } from "./store/demo-store.js";
+import { ALL_TABLES } from "./halls.js";
 import { offerFile } from "./export.js";
 
 const $ = (id) => document.getElementById(id);
@@ -152,7 +154,7 @@ function renderPicker() {
 function goTo(y, m) {
   year = y;
   month = m;
-  history.replaceState(null, "", `?m=${y}-${String(m + 1).padStart(2, "0")}`);
+  history.replaceState(null, "", `?m=${y}-${String(m + 1).padStart(2, "0")}${new URLSearchParams(location.search).has("demo") ? "&demo" : ""}`);
   render();
 }
 $("monthPick").addEventListener("change", (e) => {
@@ -197,7 +199,16 @@ document.addEventListener("click", (e) => {
 });
 
 window.__monthReady = true;
-store = createCloudStore({
+if (new URLSearchParams(location.search).has("demo")) {
+  // Practice mode: sample months plus tonight's practice night; never the cloud.
+  for (const a of document.querySelectorAll("a[data-leave]")) a.href += "?demo";
+  const night = createDemoStore().get();
+  const sample = sampleState(Date.now(), ALL_TABLES);
+  nights = nightSummaries({ ...night, sessions: [...sample.sessions, ...night.sessions], waitHistory: [...sample.waitHistory, ...night.waitHistory] }, Date.now());
+  months = monthsWithData(nights);
+  document.body.insertAdjacentHTML("afterbegin", '<div class="demo-banner no-print">PRACTICE MODE: made-up figures, not the real records.</div>');
+  render();
+} else store = createCloudStore({
   memoryCache: true,
   onAuthChange: async (user) => {
     if (!user) {

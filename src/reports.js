@@ -5,6 +5,7 @@
 // be shown before real history builds up. It doesn't touch the cloud.
 
 import { createCloudStore, friendlyError } from "./store/cloud-store.js";
+import { createDemoStore } from "./store/demo-store.js";
 import { ALL_TABLES, FLOORS, floorOf, floorsInPlay, onlyFloors } from "./halls.js";
 import { businessDateOf } from "./billing/pricing.js";
 import {
@@ -40,7 +41,7 @@ function monthsCard(cur) {
   const months = byMonth(cur.filter((n) => n.games || n.seated || n.left || n.peakWait.count));
   if (!months.length) return "";
   const rows = [...months].reverse().map((m) => `<tr>
-    <td><a data-leave href="month/?m=${m.month.getFullYear()}-${String(m.month.getMonth() + 1).padStart(2, "0")}">${m.month.toLocaleDateString([], { month: "long", year: "numeric" })} ↗</a></td><td>${moneyExact(m.collected)}</td><td>${m.nights}</td>
+    <td><a data-leave href="month/?m=${m.month.getFullYear()}-${String(m.month.getMonth() + 1).padStart(2, "0")}${demo ? "&demo" : ""}">${m.month.toLocaleDateString([], { month: "long", year: "numeric" })} ↗</a></td><td>${moneyExact(m.collected)}</td><td>${m.nights}</td>
     <td>${moneyExact(m.perNight)}</td><td>${m.games}</td><td>${m.seated ? shortDur(m.avgWaitMs) : "—"}</td>
     <td>${m.peakWait.count ? `${m.peakWait.count} <span class="muted">${fmtShort(m.peakWait.date)}</span>` : "—"}</td></tr>`).join("");
   return `<section class="nights-card">
@@ -411,8 +412,11 @@ $("exportBtn").addEventListener("click", () => {
 // ---------- Loading ----------
 async function load(full = false) {
   if (demo) {
+    // Past nights are sample data; tonight is the practice night (shared with
+    // the practice staff app in other tabs).
     const sample = sampleState(Date.now(), ALL_TABLES);
-    allState = { tables: ALL_TABLES, waitlist: [], ...sample };
+    const night = store.get();
+    allState = { ...night, sessions: [...sample.sessions, ...night.sessions], waitHistory: [...sample.waitHistory, ...night.waitHistory] };
     render();
     return;
   }
@@ -553,7 +557,16 @@ window.__reportsReady = true; // tells the page's watchdog this script loaded
 renderPeriods();
 if (demo) {
   $("demoBanner").hidden = false;
+  store = createDemoStore();
+  $("liveBox").hidden = false;
+  for (const a of document.querySelectorAll("a[data-leave]")) a.href += a.href.includes("?") ? "&demo" : "?demo";
+  store.subscribe(() => {
+    renderTonight();
+    load();
+  });
+  setInterval(renderTonight, 20_000);
   load();
+  renderManagers();
 } else {
   showStep("Checking this device's sign-in…");
   const authTimer = setTimeout(() => showStuck("checking this device's sign-in"), 20_000);

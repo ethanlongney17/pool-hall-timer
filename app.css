@@ -239,3 +239,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .btn.void-btn { background: transparent; border-color: var(--danger); color: #ff9b9e; }
 
 .wait-recent { color: var(--muted); font-size: 13px; font-weight: 600; }
+
+/* Practice mode banner */
+.demo-bar { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; padding: 8px 16px; background: #3b2a06;
+  color: var(--busy-text); border-bottom: 2px solid var(--busy-line); font-size: 14px; }
+.demo-bar span { color: #f3e3b5; }
