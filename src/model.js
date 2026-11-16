@@ -500,16 +500,46 @@ export function recentWaitMs(state, now, count = 3) {
 }
 
 /** Real waits for one business night: who was seated, how long they waited, who left. */
-export function waitStats(state, businessDate) {
+export function waitStats(state, businessDate, now = Date.now()) {
   const key = businessDate.getTime();
   const tonight = (state.waitHistory ?? []).filter((w) => businessDateOf(w.addedAt).getTime() === key);
   const seated = tonight.filter((w) => w.outcome === "seated").map((w) => w.endedAt - w.addedAt);
+  const peak = peakWaitlist(state, businessDate, now);
   return {
     seatedCount: seated.length,
     leftCount: tonight.filter((w) => w.outcome === "left").length,
     averageMs: seated.length ? seated.reduce((a, b) => a + b, 0) / seated.length : 0,
     longestMs: seated.length ? Math.max(...seated) : 0,
+    peakCount: peak.count,
+    peakAt: peak.at,
   };
+}
+
+/**
+ * The most people on the waitlist at once during a night, and when it first
+ * reached that. Worked out from when each name was added and taken off (seated,
+ * removed, or still waiting now), so it's right however names come off.
+ */
+export function peakWaitlist(state, businessDate, now = Date.now()) {
+  const key = businessDate.getTime();
+  const inNight = (t) => businessDateOf(t).getTime() === key;
+  const events = [];
+  for (const w of state.waitHistory ?? []) {
+    if (!inNight(w.addedAt)) continue;
+    events.push([w.addedAt, 1], [Math.max(w.endedAt, w.addedAt), -1]);
+  }
+  for (const w of state.waitlist ?? []) {
+    if (inNight(w.addedAt)) events.push([w.addedAt, 1], [Math.max(now, w.addedAt), -1]);
+  }
+  // At the same moment, count people leaving before people joining.
+  events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let count = 0;
+  let best = { count: 0, at: null };
+  for (const [t, d] of events) {
+    count += d;
+    if (count > best.count) best = { count, at: t };
+  }
+  return best;
 }
 
 export const actions = {

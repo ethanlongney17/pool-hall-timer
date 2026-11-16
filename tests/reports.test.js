@@ -6,6 +6,7 @@ import { businessDateOf } from "../src/billing/pricing.js";
 import {
   nightSummaries, periodRange, inRange, totals, change, byWeekday, busyHours, revenueBars, sampleState,
 } from "../src/reports-data.js";
+import { nightsCsv } from "../src/export.js";
 
 const at = (day, h, m = 0) => new Date(2026, 10, day, h, m).getTime();
 const MINUTE = 60_000;
@@ -126,4 +127,64 @@ test("Sample data is believable and only covers past nights", () => {
   eq(nights.every((n) => n.date < businessDateOf(at(13, 22))), true, "nothing tonight or later: ");
   const t = totals(inRange(nights, periodRange("all", at(13, 22))));
   eq(t.collected > 0 && t.upstairs > 0 && t.seated > 0, true);
+});
+
+// --- Peak waitlist and month by month ---------------------------------------------------
+
+test("Peak waitlist: the most waiting at once, and when", () => {
+  let s = building();
+  s = M.waitlistAdd(s, { name: "A", now: at(13, 20), id: "a" });
+  s = M.waitlistAdd(s, { name: "B", now: at(13, 20, 5), id: "b" });
+  s = M.waitlistAdd(s, { name: "C", now: at(13, 20, 10), id: "c" }); // 3 waiting at 8:10
+  s = M.seatFromWaitlist(s, { waitId: "a", tableId: "t1", now: at(13, 20, 20) });
+  s = M.waitlistRemove(s, { id: "b", now: at(13, 20, 25) }); // removed with X: still counts while they were on
+  s = M.waitlistAdd(s, { name: "D", now: at(13, 20, 30), id: "d" }); // back to 2
+  const p = M.peakWaitlist(s, businessDateOf(at(13, 22)), at(13, 22));
+  eq(p.count, 3);
+  eq(p.at, at(13, 20, 10));
+  const w = M.waitStats(s, businessDateOf(at(13, 22)), at(13, 22));
+  eq(w.peakCount, 3);
+});
+
+test("Peak counts people still waiting right now", () => {
+  let s = building();
+  for (let i = 0; i < 4; i++) s = M.waitlistAdd(s, { name: `P${i}`, now: at(13, 21, i), id: `p${i}` });
+  eq(M.peakWaitlist(s, businessDateOf(at(13, 22)), at(13, 22)).count, 4);
+  const n = nightSummaries(s, at(13, 22))[0];
+  eq(n.peakWait.count, 4, "shows in Reports before anyone is seated: ");
+});
+
+test("Someone taken off and someone added at the same moment doesn't inflate the peak", () => {
+  let s = building();
+  s = M.waitlistAdd(s, { name: "A", now: at(13, 20), id: "a" });
+  s = M.seatFromWaitlist(s, { waitId: "a", tableId: "t1", now: at(13, 20, 10) });
+  s = M.waitlistAdd(s, { name: "B", now: at(13, 20, 10), id: "b" });
+  eq(M.peakWaitlist(s, businessDateOf(at(13, 22)), at(13, 22)).count, 1);
+});
+
+test("Busiest waitlist across a period, and month-by-month totals", async () => {
+  const { byMonth } = await import("../src/reports-data.js");
+  let s = twoNights(); // Thu and Fri in November
+  s = play(s, "t6", new Date(2026, 9, 30, 20).getTime(), new Date(2026, 9, 30, 21).getTime(), "oct"); // Fri Oct 30: $25
+  s = M.waitlistAdd(s, { name: "X", now: at(13, 21), id: "x1" });
+  s = M.waitlistAdd(s, { name: "Y", now: at(13, 21, 1), id: "x2" });
+  const nights = nightSummaries(s, at(14, 12));
+  const t = totals(nights);
+  eq(t.peakWait.count, 2);
+  eq(t.peakWait.date.getDate(), 13);
+  const months = byMonth(nights);
+  eq(months.length, 2);
+  eq(months[0].month.getMonth(), 9);
+  eq(months[0].collected, 2500);
+  eq(months[1].collected, 6900);
+  eq(months[1].nights, 2);
+});
+
+test("Nightly export has the peak waitlist and when", () => {
+  let s = building();
+  s = M.waitlistAdd(s, { name: "A", now: at(13, 20, 40), id: "a" });
+  s = M.waitlistAdd(s, { name: "B", now: at(13, 20, 45), id: "b" });
+  const rows = nightsCsv(s, { now: at(13, 22) }).replace(/^﻿/, "").trim().split(/\r\n/).map((r) => r.split(","));
+  eq(rows[0].slice(18).join("|"), "Peak waitlist|Peak at");
+  eq(rows[1].slice(18).join("|"), "2|8:45 PM");
 });

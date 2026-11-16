@@ -4,7 +4,7 @@
 // A "night" is the 6am-to-6am business day used everywhere else.
 
 import { businessDateOf } from "./billing/pricing.js";
-import { sessionCharge, playedIntervals, voidedValueCents } from "./model.js";
+import { sessionCharge, playedIntervals, voidedValueCents, peakWaitlist } from "./model.js";
 import { floorOf } from "./halls.js";
 
 const DAY = 86_400_000;
@@ -17,7 +17,7 @@ function emptyNight(date) {
     date, key: nightKey(date), weekday: date.getDay(),
     collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, voidedCents: 0, games: 0, ms: 0,
     byFloor: { downstairs: 0, upstairs: 0 },
-    seated: 0, left: 0, waitMs: 0, longestMs: 0,
+    seated: 0, left: 0, waitMs: 0, longestMs: 0, peakWait: { count: 0, at: null },
     tableMsByHour: new Array(24).fill(0), // table-time played in each clock hour
   };
 }
@@ -54,6 +54,8 @@ export function nightSummaries(state, now) {
       n.longestMs = Math.max(n.longestMs, ms);
     } else n.left++;
   }
+  for (const w of state.waitlist ?? []) nightOf(w.addedAt); // tonight's list, even before anyone's seated
+  for (const n of nights.values()) n.peakWait = peakWaitlist(state, n.date, now);
   return [...nights.values()].sort((a, b) => a.date - b.date);
 }
 
@@ -66,6 +68,18 @@ function spreadByHour(buckets, from, to) {
     buckets[d.getHours()] += end - t;
     t = end;
   }
+}
+
+/** Nights grouped by calendar month, oldest first, each with its own totals. */
+export function byMonth(nights) {
+  const months = new Map();
+  for (const n of nights) {
+    const start = new Date(n.date.getFullYear(), n.date.getMonth(), 1);
+    const k = start.getTime();
+    if (!months.has(k)) months.set(k, { month: start, nights: [] });
+    months.get(k).nights.push(n);
+  }
+  return [...months.values()].sort((a, b) => a.month - b.month).map((m) => ({ month: m.month, ...totals(m.nights) }));
 }
 
 // ---------- Periods ----------
@@ -123,13 +137,14 @@ export function totals(nights) {
   const t = {
     nights: nights.filter((n) => n.games).length,
     collected: 0, full: 0, couponCents: 0, coupons: 0, voids: 0, voidedCents: 0, games: 0, ms: 0,
-    upstairs: 0, downstairs: 0, seated: 0, left: 0, waitMs: 0, longestMs: 0,
+    upstairs: 0, downstairs: 0, seated: 0, left: 0, waitMs: 0, longestMs: 0, peakWait: { count: 0, at: null, date: null },
   };
   for (const n of nights) {
     for (const k of ["collected", "full", "couponCents", "coupons", "voids", "voidedCents", "games", "ms", "seated", "left", "waitMs"]) t[k] += n[k];
     t.upstairs += n.byFloor.upstairs;
     t.downstairs += n.byFloor.downstairs;
     t.longestMs = Math.max(t.longestMs, n.longestMs);
+    if (n.peakWait.count > t.peakWait.count) t.peakWait = { ...n.peakWait, date: n.date };
   }
   t.perGame = t.games ? t.collected / t.games : 0;
   t.perNight = t.nights ? t.collected / t.nights : 0;

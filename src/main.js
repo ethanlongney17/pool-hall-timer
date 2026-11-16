@@ -8,7 +8,7 @@ import { makeManager, findManager, hasManagers } from "./pin.js";
 import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "19 (cloud)";
+export const APP_VERSION = "20 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });
@@ -780,8 +780,9 @@ function withAllHistory(fn) {
 
 function waitSummaryHtml(day, state) {
   const w = waitStats(state, day);
-  if (!w.seatedCount && !w.leftCount) return "";
+  if (!w.seatedCount && !w.leftCount && !w.peakCount) return "";
   return `<dl class="kv"><dt>Waitlist</dt><dd>${w.seatedCount} seated${w.leftCount ? `, ${w.leftCount} left` : ""}</dd>
+    ${w.peakCount ? `<dt>Busiest waitlist</dt><dd>${w.peakCount} waiting at ${fmtTime(w.peakAt)}</dd>` : ""}
     ${w.seatedCount ? `<dt>Average wait</dt><dd>${shortDur(w.averageMs)}</dd><dt>Longest wait</dt><dd>${shortDur(w.longestMs)}</dd>` : ""}</dl>`;
 }
 

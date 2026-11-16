@@ -9,7 +9,7 @@ import { ALL_TABLES } from "./halls.js";
 import { businessDateOf } from "./billing/pricing.js";
 import { daySummary } from "./model.js";
 import {
-  nightSummaries, PERIODS, periodRange, inRange, totals, change, byWeekday, busyHours, revenueBars, sampleState, nightKey,
+  nightSummaries, PERIODS, periodRange, inRange, totals, change, byWeekday, busyHours, revenueBars, sampleState, nightKey, byMonth,
 } from "./reports-data.js";
 import { offerFile } from "./export.js";
 import { makeManager, findManager, hasManagers } from "./pin.js";
@@ -31,6 +31,23 @@ function shortDur(ms) {
   const m = Math.round(ms / 60000);
   return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`;
 }
+const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+// Month by month: what the owners compare most.
+function monthsCard(cur) {
+  const months = byMonth(cur.filter((n) => n.games || n.seated || n.left || n.peakWait.count));
+  if (!months.length) return "";
+  const rows = [...months].reverse().map((m) => `<tr>
+    <td>${m.month.toLocaleDateString([], { month: "long", year: "numeric" })}</td><td>${moneyExact(m.collected)}</td><td>${m.nights}</td>
+    <td>${moneyExact(m.perNight)}</td><td>${m.games}</td><td>${m.seated ? shortDur(m.avgWaitMs) : "—"}</td>
+    <td>${m.peakWait.count ? `${m.peakWait.count} <span class="muted">${fmtShort(m.peakWait.date)}</span>` : "—"}</td></tr>`).join("");
+  return `<section class="nights-card">
+    <h2>Month by month</h2>
+    <div class="nights-scroll"><table class="nights-table">
+      <thead><tr><th>Month</th><th>Collected</th><th>Nights</th><th>Per night</th><th>Games</th><th>Avg wait</th><th>Busiest list</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></section>`;
+}
+
 const hourLabel = (h) => (h === 0 ? "12am" : h === 12 ? "12pm" : h < 12 ? `${h}am` : `${h - 12}pm`);
 const PREV_LABEL = {
   7: "vs the 7 nights before", 30: "vs the 30 nights before", month: "vs the same days last month",
@@ -111,6 +128,8 @@ function render() {
       <div class="kpi"><span class="k-label">Table-hours played</span><span class="k-value">${Math.round(T.ms / 3_600_000).toLocaleString()}</span>${d("ms")}</div>
       <div class="kpi"><span class="k-label">Average wait</span><span class="k-value">${T.seated ? shortDur(T.avgWaitMs) : "—"}</span>
         ${T.seated ? d("avgWaitMs", { lowerIsBetter: true }) : ""}<span class="k-note">${T.seated} seated from the waitlist · ${T.left} gave up</span></div>
+      <div class="kpi"><span class="k-label">Busiest waitlist</span><span class="k-value">${T.peakWait.count ? `${T.peakWait.count} waiting` : "—"}</span>
+        <span class="k-note">${T.peakWait.count ? `${fmtNight(T.peakWait.date)} at ${fmtClock(T.peakWait.at)}` : "No one on the waitlist in this period"}</span></div>
       <div class="kpi"><span class="k-label">Upstairs</span><span class="k-value">${money(T.upstairs)}</span>
         <span class="k-note">${Math.round(T.upstairsShare * 100)}% of collected</span></div>
       <div class="kpi"><span class="k-label">Coupons and voids</span><span class="k-value">${T.coupons} · ${T.voids}</span>
@@ -125,6 +144,8 @@ function render() {
       <div class="chart-card"><h2>Busiest hours</h2><div class="c-sub">Average number of tables in use</div>
         <div class="chart" id="hourChart"></div></div>
     </section>
+
+    ${monthsCard(cur)}
 
     <section class="nights-card">
       <h2>Every night</h2>
@@ -142,13 +163,14 @@ function nightsTable(cur, T) {
     <td>${fmtNight(n.date)}</td><td>${moneyExact(n.collected)}</td><td>${n.games}</td><td>${(n.ms / 3_600_000).toFixed(1)}</td>
     <td>${moneyExact(n.byFloor.downstairs)}</td><td>${n.byFloor.upstairs ? moneyExact(n.byFloor.upstairs) : "—"}</td>
     <td>${n.coupons ? `${n.coupons} · ${moneyExact(n.couponCents)}` : "—"}</td><td>${n.voids ? `${n.voids} · ${moneyExact(n.voidedCents)}` : "—"}</td>
-    <td>${n.seated ? shortDur(n.waitMs / n.seated) : "—"}</td><td>${n.left || "—"}</td></tr>`).join("");
+    <td>${n.seated ? shortDur(n.waitMs / n.seated) : "—"}</td>
+    <td>${n.peakWait.count ? `${n.peakWait.count} <span class="muted">at ${fmtClock(n.peakWait.at)}</span>` : "—"}</td><td>${n.left || "—"}</td></tr>`).join("");
   return `<table class="nights-table">
-    <thead><tr><th>Night</th><th>Collected</th><th>Games</th><th>Hours</th><th>Downstairs</th><th>Upstairs</th><th>Coupons</th><th>Voids</th><th>Avg wait</th><th>Gave up</th></tr></thead>
+    <thead><tr><th>Night</th><th>Collected</th><th>Games</th><th>Hours</th><th>Downstairs</th><th>Upstairs</th><th>Coupons</th><th>Voids</th><th>Avg wait</th><th>Peak list</th><th>Gave up</th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td>Total</td><td>${moneyExact(T.collected)}</td><td>${T.games}</td><td>${(T.ms / 3_600_000).toFixed(1)}</td>
       <td>${moneyExact(T.downstairs)}</td><td>${moneyExact(T.upstairs)}</td><td>${T.coupons} · ${moneyExact(T.couponCents)}</td><td>${T.voids} · ${moneyExact(T.voidedCents)}</td>
-      <td>${T.seated ? shortDur(T.avgWaitMs) : "—"}</td><td>${T.left}</td></tr></tfoot></table>`;
+      <td>${T.seated ? shortDur(T.avgWaitMs) : "—"}</td><td>${T.peakWait.count || "—"}</td><td>${T.left}</td></tr></tfoot></table>`;
 }
 
 // Tonight so far, live from the staff apps (not in the sample).
@@ -331,11 +353,11 @@ $("exportBtn").addEventListener("click", () => {
   const now = Date.now();
   const cur = inRange(nightSummaries(allState, now), periodRange(period, now)).filter((n) => n.games || n.seated || n.left);
   const head = ["Night", "Day", "Collected ($)", "Games", "Hours played", "Downstairs ($)", "Upstairs ($)", "Coupons used", "Coupons ($)",
-    "Voided", "Voided ($)", "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Gave up"];
+    "Voided", "Voided ($)", "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Gave up", "Peak waitlist", "Peak at"];
   const rows = cur.map((n) => [nightKey(n.date), WD_LONG[n.weekday].slice(0, -1), (n.collected / 100).toFixed(2), n.games,
     (n.ms / 3_600_000).toFixed(2), (n.byFloor.downstairs / 100).toFixed(2), (n.byFloor.upstairs / 100).toFixed(2), n.coupons,
     (n.couponCents / 100).toFixed(2), n.voids, (n.voidedCents / 100).toFixed(2), n.seated, n.seated ? (n.waitMs / n.seated / 60000).toFixed(1) : "",
-    n.seated ? (n.longestMs / 60000).toFixed(1) : "", n.left]);
+    n.seated ? (n.longestMs / 60000).toFixed(1) : "", n.left, n.peakWait.count, n.peakWait.at ? fmtClock(n.peakWait.at) : ""]);
   const csv = "﻿" + [head, ...rows].map((r) => r.join(",")).join("\r\n") + "\r\n";
   offerFile(`pool-hall-report-${period}-${nightKey(new Date())}.csv`, csv, "text/csv").catch((e) => toast(e.message, true));
 });

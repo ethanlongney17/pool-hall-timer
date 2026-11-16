@@ -14,6 +14,10 @@ function dateTime(t) {
   const h = d.getHours() % 12 || 12;
   return `${ymd(d)} ${h}:${pad(d.getMinutes())} ${d.getHours() < 12 ? "AM" : "PM"}`;
 }
+const clock = (t) => {
+  const d = new Date(t);
+  return `${d.getHours() % 12 || 12}:${pad(d.getMinutes())} ${d.getHours() < 12 ? "AM" : "PM"}`;
+};
 function hms(ms) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
@@ -90,7 +94,7 @@ export const NIGHTS_HEADER = [
   "Night", "Day", "Tables played", "Hours played", "Full charges ($)", "Coupons used", "Coupons ($)",
   "Collected ($)", "Voided", "Still running", "Floor",
   "Seated from waitlist", "Average wait (min)", "Longest wait (min)", "Left waitlist",
-  "Downstairs collected ($)", "Upstairs collected ($)", "Voided ($)",
+  "Downstairs collected ($)", "Upstairs collected ($)", "Voided ($)", "Peak waitlist", "Peak at",
 ];
 
 /** One row per night: the figures to check against the POS. Oldest night first. */
@@ -103,6 +107,7 @@ export function nightsCsv(state, { now }) {
     return nights.get(k);
   };
   for (const w of state.waitHistory ?? []) nightOf(w.addedAt); // nights with waits but no games still get a row
+  for (const w of state.waitlist ?? []) nightOf(w.addedAt); // and tonight, while people are still waiting
   for (const s of state.sessions) {
     const n = nightOf(s.start);
     n.games.push(s);
@@ -120,13 +125,14 @@ export function nightsCsv(state, { now }) {
   const rows = [...nights.values()]
     .sort((a, b) => a.bd - b.bd)
     .map((n) => {
-      const w = waitStats(state, n.bd);
+      const w = waitStats(state, n.bd, now);
       const mins = (ms) => (w.seatedCount ? (ms / 60_000).toFixed(1) : "");
       return csvRow([
         ymd(n.bd), WEEKDAYS[n.bd.getDay()], n.played, (n.ms / 3_600_000).toFixed(2), dollars(n.full), n.coupons,
         dollars(n.coupon), dollars(n.charged), n.voided, n.running, floorsLabel(state, n.games),
         w.seatedCount, mins(w.averageMs), mins(w.longestMs), w.leftCount,
         dollars(n.byFloor.Downstairs), dollars(n.byFloor.Upstairs), dollars(n.voidedCents),
+        w.peakCount, w.peakAt ? clock(w.peakAt) : "",
       ]);
     });
   return "﻿" + [csvRow(NIGHTS_HEADER), ...rows].join("\r\n") + "\r\n";
