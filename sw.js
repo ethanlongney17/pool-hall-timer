@@ -2,7 +2,7 @@
 // Network first (so updates arrive as soon as they're published), falling
 // back to the last cached copy when offline.
 
-const CACHE = "pool-hall-v21";
+const CACHE = "pool-hall-v22";
 const SHELL = [
   "./",
   "index.html",
@@ -15,6 +15,7 @@ const SHELL = [
   "src/pin.js",
   "reports/",
   "reports/index.html",
+  "reports/manifest.webmanifest",
   "reports.css",
   "src/reports.js",
   "src/reports-data.js",

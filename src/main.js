@@ -8,7 +8,7 @@ import { makeManager, findManager, hasManagers } from "./pin.js";
 import { newId, voidedValueCents } from "./model.js";
 
 // Shown in the status bar so staff can tell which version the iPad is running.
-export const APP_VERSION = "21 (cloud)";
+export const APP_VERSION = "22 (cloud)";
 
 const hall = currentHall();
 const store = createCloudStore({ onAuthChange: handleAuth, onError: (msg) => toast(msg, true) });

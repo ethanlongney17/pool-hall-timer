@@ -7,7 +7,9 @@
 <meta name="theme-color" content="#0d141b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Reports">
+<meta name="apple-mobile-web-app-title" content="Pool Owners">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="../icons/icon-180.png">
 <link rel="icon" href="../icons/icon-192.png">
 <link rel="stylesheet" href="../app.css">
@@ -19,6 +21,7 @@
   <div>
     <h1>Pool Hall Reports</h1>
     <div class="r-sub" id="subtitle">Both floors · every night recorded</div>
+    <div class="r-who" id="who" hidden></div>
   </div>
   <div class="r-head-actions">
     <a class="btn ghost" id="backLink" data-leave href="../">← Back to tables</a>
@@ -27,6 +30,8 @@
     <button class="btn ghost" id="exportBtn">Export nights</button>
   </div>
 </header>
+
+<section class="r-main live-box" id="liveBox" hidden><div class="tonight" id="tonight"></div></section>
 
 <nav class="periods" id="periods" aria-label="Period"></nav>
 

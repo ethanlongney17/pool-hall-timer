@@ -160,3 +160,32 @@ body.month-report {
   .mr-tiles, .mr-grid, .mr-box, .mr-tile, tr { break-inside: avoid; }
   .mr-section { overflow: visible; }
 }
+
+/* ---------- Right now (live) ---------- */
+.tonight { display: grid; gap: 14px; align-items: start; padding: 16px 18px; }
+.live-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.live-head h2 { margin: 0; font-size: 20px; }
+.live-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.live-stats > div { display: grid; gap: 2px; align-content: start; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.live-stats span { color: var(--muted); font-weight: 600; font-size: 14px; }
+.live-stats b { font-size: 30px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.live-stats b small { font-size: 16px; color: var(--muted); font-weight: 600; }
+.live-stats > div > small { color: var(--text-2); font-size: 13px; }
+.live-map { display: grid; gap: 10px; }
+.map-label { color: var(--muted); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+.map-tile { border-radius: 8px; padding: 6px 4px; text-align: center; border: 1px solid; display: grid; gap: 0; min-height: 50px; align-content: center; }
+.map-tile b { font-size: 17px; }
+.map-tile span { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-tile.free { background: var(--free-bg); border-color: var(--free-line); color: var(--free-text); }
+.map-tile.running { background: var(--busy-bg); border-color: var(--busy-line); color: var(--busy-text); }
+.map-tile.paused { background: #16263a; border-color: #5b8fd6; color: #9cc2f2; border-style: dashed; }
+.map-tile.reserved { background: #1d2333; border-color: #7b8db8; color: #c6d2f0; border-style: dashed; }
+.map-tile.cleaning { background: #2a2433; border-color: #9a7fd1; color: #cdb8f5; border-style: dashed; }
+.r-who { color: var(--muted); font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 700px) {
+  .live-stats { grid-template-columns: 1fr; }
+  .live-stats b { font-size: 26px; }
+}
+
+.live-box { padding-bottom: 0; padding-top: 12px; }

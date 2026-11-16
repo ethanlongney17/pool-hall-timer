@@ -5,9 +5,11 @@
 // be shown before real history builds up. It doesn't touch the cloud.
 
 import { createCloudStore, friendlyError } from "./store/cloud-store.js";
-import { ALL_TABLES } from "./halls.js";
+import { ALL_TABLES, FLOORS, floorOf, floorsInPlay, onlyFloors } from "./halls.js";
 import { businessDateOf } from "./billing/pricing.js";
-import { daySummary } from "./model.js";
+import {
+  daySummary, tableStatus, activeSession, activeReservation, isPaused, pausedMs, waitEstimates, peakWaitlist,
+} from "./model.js";
 import {
   nightSummaries, PERIODS, periodRange, inRange, totals, change, byWeekday, busyHours, revenueBars, sampleState, nightKey, byMonth,
 } from "./reports-data.js";
@@ -111,15 +113,13 @@ function render() {
     ? `<p class="r-note">Records start ${fmtNight(first.date)}, when the new system began. Earlier nights were on the old program and aren't included${r.prev ? ", so comparisons with the period before only count from then" : ""}.</p>` : "";
 
   if (!T.games) {
-    $("report").innerHTML = `${demo ? "" : `<div class="tonight" id="tonight"></div>`}
-      <p class="r-empty">No games recorded in this period yet. Records start from the day the two-floor version went live, plus any history uploaded from the iPads.</p>`;
+    $("report").innerHTML = `      <p class="r-empty">No games recorded in this period yet. Records start from the day the two-floor version went live, plus any history uploaded from the iPads.</p>`;
     renderTonight();
     return;
   }
 
   $("report").innerHTML = `
-    ${demo ? "" : `<div class="tonight" id="tonight"></div>`}
-    ${startNote}
+        ${startNote}
     <section class="kpis" aria-label="Headline figures">
       <div class="kpi hero"><span class="k-label">Collected</span><span class="k-value">${money(T.collected)}</span>
         ${d("collected")}<span class="k-note">${money(T.perNight)} per night on average · after ${money(T.couponCents)} in coupons</span></div>
@@ -174,16 +174,62 @@ function nightsTable(cur, T) {
 }
 
 // Tonight so far, live from the staff apps (not in the sample).
+// ---------- Right now (live) ----------
+// For the owners checking in from their phones: how busy it is this minute,
+// tonight's money so far, and a small map of every table. Updates live from
+// the same records the iPads write.
+
+const STATUS_LABEL = { running: "Playing", paused: "Paused", free: "Free", reserved: "Reserved", cleaning: "Cleaning" };
+
+function fmtWait(ms) {
+  if (ms == null) return "";
+  if (ms <= 0) return "a table is free now";
+  const lo = Math.max(5, Math.ceil(ms / 300_000) * 5);
+  return lo >= 60 ? `about ${Math.floor(lo / 60)}h ${String(lo % 60).padStart(2, "0")}m` : `about ${lo}–${lo + 5} min`;
+}
+
 function renderTonight() {
   const el = $("tonight");
   if (!el || !store) return;
   const now = Date.now();
   const live = store.get();
+  const open = live.upstairsOpen;
+  const floors = floorsInPlay(open);
+  const inPlay = onlyFloors(live, floors);
   const s = daySummary(live, businessDateOf(now), now);
-  el.innerHTML = `<span class="label">Tonight so far</span><span class="live-dot">● Live</span>
-    <span><b>${moneyExact(s.closedTotalCents)}</b> collected</span>
-    <span><b>${s.open.length}</b> table${s.open.length === 1 ? "" : "s"} running (${moneyExact(s.openRunningCents)} so far)</span>
-    <span><b>${live.waitlist.length}</b> on the waitlist</span>`;
+  const statusOf = (t) => {
+    const st = tableStatus(live, t.id, now);
+    return st === "running" && isPaused(activeSession(live, t.id)) ? "paused" : st;
+  };
+  const counts = { running: 0, paused: 0, free: 0, reserved: 0, cleaning: 0 };
+  for (const t of inPlay.tables) counts[statusOf(t)]++;
+  const inUse = counts.running + counts.paused;
+  const estimates = waitEstimates(inPlay, now);
+  const peak = peakWaitlist(live, businessDateOf(now), now);
+  const tile = (t) => {
+    const st = statusOf(t);
+    const g = activeSession(live, t.id);
+    const r = st === "reserved" ? activeReservation(live, t.id, now) : null;
+    const detail = g ? shortDur(now - g.start - pausedMs(g, now)) : r?.name ? esc(r.name) : STATUS_LABEL[st];
+    return `<div class="map-tile ${st}" title="${esc(t.name)}: ${STATUS_LABEL[st]}"><b>${esc(t.name.replace("Table ", ""))}</b><span>${detail}</span></div>`;
+  };
+  const floorMap = (f) => {
+    const ts = live.tables.filter((t) => floorOf(live, t.id) === f);
+    return `<div class="map-floor"><div class="map-label">${FLOORS[f].name}${f === "upstairs" && !open ? " · closed" : ""}</div>
+      <div class="map-grid">${ts.map(tile).join("")}</div></div>`;
+  };
+  el.innerHTML = `
+    <div class="live-head"><h2>Right now</h2><span class="live-dot">● Live</span>
+      <span class="muted">updated ${new Date(now).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>
+    <div class="live-stats">
+      <div><span>Tables in use</span><b>${inUse} <small>of ${inPlay.tables.length}</small></b>
+        <small>${counts.free} free${counts.reserved ? ` · ${counts.reserved} reserved` : ""}${counts.cleaning ? ` · ${counts.cleaning} cleaning` : ""}${counts.paused ? ` · ${counts.paused} paused` : ""}${open ? "" : " · upstairs closed"}</small></div>
+      <div><span>Waitlist</span><b>${live.waitlist.length} <small>waiting</small></b>
+        <small>New party: ${fmtWait(estimates[estimates.length - 1])}${peak.count ? ` · busiest tonight ${peak.count} at ${new Date(peak.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}</small></div>
+      <div><span>Tonight so far</span><b>${moneyExact(s.closedTotalCents)}</b>
+        <small>collected from ${s.closed.length} games · ${moneyExact(s.openRunningCents)} more on running tables</small></div>
+    </div>
+    <div class="live-map">${floorMap("downstairs")}${floorMap("upstairs")}</div>`;
 }
 
 // ---------- Charts ----------
@@ -516,6 +562,23 @@ if (demo) {
     onAuthChange: (user) => {
       clearTimeout(authTimer);
       login.hidden = !!user;
+      $("liveBox").hidden = !user;
+      $("who").hidden = !user;
+      if (user) {
+        $("who").innerHTML = `Signed in as ${esc(user.email)} <button class="btn link" type="button" id="signOutBtn">Sign out</button>`;
+        // Two taps: signing out here signs out this whole device, including the
+        // staff app if this is the iPad behind the counter.
+        $("signOutBtn").addEventListener("click", (e) => {
+          const b = e.currentTarget;
+          if (!b.dataset.armed) {
+            b.dataset.armed = "1";
+            b.textContent = "Tap again to sign out this device (and its staff app, if any)";
+            setTimeout(() => { delete b.dataset.armed; b.textContent = "Sign out"; }, 5000);
+            return;
+          }
+          store.signOut().then(() => location.reload());
+        });
+      }
       if (user) load();
       else showStep("Sign in to see the records.");
     },
@@ -525,5 +588,5 @@ if (demo) {
     renderTonight();
     if (!document.querySelector(".remove-confirm")) renderManagers();
   });
-  setInterval(renderTonight, 30_000);
+  setInterval(renderTonight, 20_000);
 }
